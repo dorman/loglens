@@ -51,11 +51,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             // Bracketed paste: only meaningful while typing in the input prompt.
             // Everywhere else it is deliberately ignored — without this, pasted
             // text would be replayed as keystrokes ('q' quits, 'S' scans, …).
-            Event::Paste(text)
-                if app.mode == Mode::Input => {
-                    app.input_buffer
-                        .extend(text.chars().filter(|c| !c.is_control()));
-                }
+            Event::Paste(text) if app.mode == Mode::Input => {
+                app.push_input_chars(text.chars());
+            }
             _ => {}
         }
     }
@@ -178,7 +176,7 @@ fn handle_input(app: &mut App, code: KeyCode) {
         KeyCode::Backspace => {
             app.input_buffer.pop();
         }
-        KeyCode::Char(c) => app.input_buffer.push(c),
+        KeyCode::Char(c) => app.push_input_chars(std::iter::once(c)),
         _ => {}
     }
 }
@@ -254,9 +252,22 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::BackTab => app.prev_file(),
         // Scan for known-bad signatures.
         KeyCode::Char('S') => app.begin_scan(),
-        // Search & filter.
-        KeyCode::Char('/') => app.begin_input(InputKind::Search),
-        KeyCode::Char('f') => app.toggle_filter(),
+        // Search & filter (require an open file — otherwise search_hits would
+        // panic on the empty welcome screen).
+        KeyCode::Char('/') => {
+            if app.has_files() {
+                app.begin_input(InputKind::Search);
+            } else {
+                app.status = Some("open a file before searching".into());
+            }
+        }
+        KeyCode::Char('f') => {
+            if app.has_files() {
+                app.toggle_filter();
+            } else {
+                app.status = Some("open a file before filtering".into());
+            }
+        }
         // Import / manage files.
         KeyCode::Char('o') => app.open_browser(),
         KeyCode::Char('w') => app.close_current_file(),

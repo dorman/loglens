@@ -126,15 +126,6 @@ impl Browser {
         self.refresh();
     }
 
-    /// The directory to open recursively: the highlighted entry if it is a
-    /// directory, otherwise the current directory.
-    pub fn selected_dir(&self) -> PathBuf {
-        match self.selected_entry() {
-            Some(e) if e.is_dir => e.path.clone(),
-            _ => self.cwd.clone(),
-        }
-    }
-
     /// The set of files to open: all marked files, or the selected file if none
     /// are marked. Directories are never returned.
     pub fn files_to_open(&self) -> Vec<PathBuf> {

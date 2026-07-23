@@ -1,5 +1,6 @@
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -7,9 +8,24 @@ use ratatui::layout::Rect;
 use regex::Regex;
 
 use crate::browser::Browser;
-use crate::ingest;
-use crate::rules::{self, Rule};
+use crate::ingest::{self, MAX_LOG_BYTES};
+use crate::rules::{self, Rule, MAX_RULES};
 use crate::signatures::{self, Severity, Signature};
+
+/// Hard caps that keep hostile or pathological inputs from exhausting memory.
+const MAX_MATCHES_PER_LINE: usize = 256;
+const MAX_MATCHES_PER_FILE: usize = 100_000;
+const MAX_FINDINGS: usize = 10_000;
+const MAX_OPEN_FILES: usize = 500;
+/// A 50 MB file of 1-byte lines would otherwise allocate tens of millions of
+/// `String`s; cap line count so RAM stays bounded inside the byte budget.
+const MAX_LINES_PER_FILE: usize = 250_000;
+/// Truncate individual lines beyond this many bytes (at a char boundary).
+const MAX_LINE_BYTES: usize = 32 * 1024;
+/// Soft budget across all open tabs — further opens are skipped once hit.
+const MAX_TOTAL_LINES: usize = 1_000_000;
+/// Max characters accepted in the keyword / regex / search prompt (incl. paste).
+pub const MAX_INPUT_LEN: usize = 4_096;
 
 /// A single scan hit: signature `sig` matched line `line` of file `file`.
 #[derive(Clone, Copy)]
@@ -77,16 +93,32 @@ pub struct LogFile {
     pub top: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
+    /// True if the file was truncated (too many lines and/or overlong lines).
+    pub truncated: bool,
 }
 
 impl LogFile {
     fn load(path: &Path, name: String, rules: &[Rule]) -> Result<Self> {
+        // Cap the read so a direct open (CLI/browser) cannot bypass the folder
+        // collection size limit and OOM the process. `take(limit+1)` also closes
+        // the race where a file grows between a metadata check and the read.
+        let file = File::open(path)
+            .with_context(|| format!("failed to read '{}'", path.display()))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_LOG_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("failed to read '{}'", path.display()))?;
+        if bytes.len() as u64 > MAX_LOG_BYTES {
+            anyhow::bail!(
+                "'{}' is larger than {} MB; open a smaller file or split it",
+                path.display(),
+                MAX_LOG_BYTES / (1024 * 1024)
+            );
+        }
         // Read bytes and convert lossily: real-world diagnostic logs routinely
         // contain stray non-UTF-8 bytes, which must not make the file unopenable.
-        let bytes = fs::read(path)
-            .with_context(|| format!("failed to read '{}'", path.display()))?;
         let content = String::from_utf8_lossy(&bytes);
-        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+        let (lines, truncated) = split_log_lines(&content);
 
         let line_count = lines.len();
         let mut file = LogFile {
@@ -99,6 +131,7 @@ impl LogFile {
             view_pos: 0,
             top: 0,
             scan_severity: vec![None; line_count],
+            truncated,
         };
         file.rescan(rules);
         file.view = (0..file.lines.len()).collect();
@@ -110,17 +143,31 @@ impl LogFile {
         let mut matches: Vec<Vec<MatchSpan>> = Vec::with_capacity(self.lines.len());
         let mut match_lines = Vec::new();
         let mut rule_counts = vec![0usize; rules.len()];
+        let mut total_matches = 0usize;
 
-        for (i, line) in self.lines.iter().enumerate() {
+        'lines: for (i, line) in self.lines.iter().enumerate() {
             let mut spans = Vec::new();
             for (rule_idx, rule) in rules.iter().enumerate() {
                 for m in rule.regex.find_iter(line) {
+                    // Skip zero-width matches; they add no visual value and can
+                    // explode span counts for patterns like `a*`.
+                    if m.start() == m.end() {
+                        continue;
+                    }
                     spans.push(MatchSpan {
                         start: m.start(),
                         end: m.end(),
                         rule: rule_idx,
                     });
                     rule_counts[rule_idx] += 1;
+                    total_matches += 1;
+                    if spans.len() >= MAX_MATCHES_PER_LINE || total_matches >= MAX_MATCHES_PER_FILE
+                    {
+                        break;
+                    }
+                }
+                if spans.len() >= MAX_MATCHES_PER_LINE || total_matches >= MAX_MATCHES_PER_FILE {
+                    break;
                 }
             }
             if !spans.is_empty() {
@@ -128,6 +175,13 @@ impl LogFile {
                 match_lines.push(i);
             }
             matches.push(spans);
+            if total_matches >= MAX_MATCHES_PER_FILE {
+                // Fill remaining lines with empty match lists so indices stay aligned.
+                for _ in (i + 1)..self.lines.len() {
+                    matches.push(Vec::new());
+                }
+                break 'lines;
+            }
         }
 
         self.matches = matches;
@@ -167,6 +221,38 @@ impl LogFile {
     pub fn total_matches(&self) -> usize {
         self.rule_counts.iter().sum()
     }
+}
+
+/// Split log text into owned lines, truncating overlong lines and stopping at
+/// [`MAX_LINES_PER_FILE`]. Returns `(lines, truncated)`.
+fn split_log_lines(content: &str) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut truncated = false;
+    for line in content.lines() {
+        if lines.len() >= MAX_LINES_PER_FILE {
+            truncated = true;
+            break;
+        }
+        if line.len() > MAX_LINE_BYTES {
+            truncated = true;
+            let mut end = MAX_LINE_BYTES;
+            while end > 0 && !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            lines.push(format!("{}…", &line[..end]));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    // A trailing empty line after a final newline is usually noise; `str::lines`
+    // already drops it. Nothing else to do.
+    (lines, truncated)
+}
+
+/// Compile a case-insensitive literal search pattern with the same size/nest
+/// budgets as user highlight rules.
+pub fn compile_search(text: &str) -> Result<Regex> {
+    rules::compile_regex(&format!("(?i){}", regex::escape(text)))
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -220,6 +306,16 @@ pub struct App {
     pub scrollbar_drag: bool,
     pub status: Option<String>,
     pub should_quit: bool,
+    /// Temp directories created while extracting zip bundles; removed on Drop.
+    temp_dirs: Vec<PathBuf>,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        for dir in self.temp_dirs.drain(..) {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
 }
 
 impl App {
@@ -249,6 +345,7 @@ impl App {
             scrollbar_drag: false,
             status: None,
             should_quit: false,
+            temp_dirs: Vec::new(),
         };
 
         let paths: Vec<PathBuf> = inputs.iter().map(PathBuf::from).collect();
@@ -263,6 +360,19 @@ impl App {
         Ok(app)
     }
 
+    /// Append characters to the input prompt, respecting [`MAX_INPUT_LEN`].
+    pub fn push_input_chars(&mut self, chars: impl IntoIterator<Item = char>) {
+        for c in chars {
+            if self.input_buffer.chars().count() >= MAX_INPUT_LEN {
+                self.status = Some(format!("input limited to {MAX_INPUT_LEN} characters"));
+                break;
+            }
+            if !c.is_control() {
+                self.input_buffer.push(c);
+            }
+        }
+    }
+
     // --- Opening files ---------------------------------------------------
 
     /// Resolve each input (file / folder / zip) and open the resulting logs.
@@ -271,15 +381,35 @@ impl App {
         let mut errors = Vec::new();
         for p in inputs {
             match ingest::resolve(p) {
-                Ok(mut t) => targets.append(&mut t),
+                Ok(outcome) => {
+                    if let Some(dir) = outcome.temp_dir {
+                        self.temp_dirs.push(dir);
+                    }
+                    targets.extend(outcome.targets);
+                }
                 Err(e) => errors.push(format!("{e}")),
             }
         }
 
         let mut opened = 0;
+        let mut skipped_cap = 0;
+        let mut truncated = 0;
+        let mut total_lines: usize = self.files.iter().map(|f| f.lines.len()).sum();
         for t in &targets {
+            if self.files.len() >= MAX_OPEN_FILES || total_lines >= MAX_TOTAL_LINES {
+                skipped_cap += 1;
+                continue;
+            }
             match LogFile::load(&t.path, t.name.clone(), &self.rules) {
                 Ok(mut f) => {
+                    if total_lines + f.lines.len() > MAX_TOTAL_LINES {
+                        skipped_cap += 1;
+                        continue;
+                    }
+                    if f.truncated {
+                        truncated += 1;
+                    }
+                    total_lines += f.lines.len();
                     f.rebuild_view(self.filter_on, self.search.as_ref().map(|s| &s.regex));
                     self.files.push(f);
                     opened += 1;
@@ -287,15 +417,22 @@ impl App {
                 Err(e) => errors.push(format!("{e}")),
             }
         }
+        if skipped_cap > 0 {
+            errors.push(format!(
+                "open cap reached ({MAX_OPEN_FILES} files / {MAX_TOTAL_LINES} lines); skipped {skipped_cap}"
+            ));
+        }
 
         if opened > 0 {
             self.current = self.files.len() - opened;
             self.mode = Mode::Viewer;
         }
-        self.status = Some(match (opened, errors.len()) {
-            (0, 0) => "no log files found".to_string(),
-            (n, 0) => format!("opened {n} file(s)"),
-            (n, e) => format!("opened {n}, {e} failed/skipped"),
+        self.status = Some(match (opened, errors.len(), truncated) {
+            (0, 0, _) => "no log files found".to_string(),
+            (n, 0, 0) => format!("opened {n} file(s)"),
+            (n, 0, t) => format!("opened {n} file(s) ({t} truncated to line/length caps)"),
+            (n, e, 0) => format!("opened {n}, {e} failed/skipped"),
+            (n, e, t) => format!("opened {n}, {e} failed/skipped ({t} truncated)"),
         });
     }
 
@@ -303,18 +440,21 @@ impl App {
     pub fn open_selected_files(&mut self) {
         let paths = self.browser.files_to_open();
         if paths.is_empty() {
-            self.status = Some("nothing selected (Space to mark, O to open a folder)".into());
+            self.status = Some("nothing selected (Space to mark, O to open a folder/zip)".into());
             return;
         }
         self.browser.marked.clear();
         self.open_resolved(&paths);
     }
 
-    /// Open every log under the highlighted directory (or the current directory
-    /// if a file is selected) recursively.
+    /// Open every log under the highlighted directory or zip (or the current
+    /// directory if a non-zip file is selected) recursively.
     pub fn open_selected_dir(&mut self) {
-        let dir = self.browser.selected_dir();
-        self.open_resolved(&[dir]);
+        let path = match self.browser.selected_entry() {
+            Some(e) if e.is_dir || ingest::is_zip(&e.path) => e.path.clone(),
+            _ => self.browser.cwd.clone(),
+        };
+        self.open_resolved(&[path]);
     }
 
     pub fn has_files(&self) -> bool {
@@ -339,11 +479,9 @@ impl App {
 
     fn leave_input(&mut self) {
         self.input_buffer.clear();
-        self.mode = if self.has_files() {
-            Mode::Viewer
-        } else {
-            Mode::Browser
-        };
+        // Stay on the welcome viewer when nothing is open; jumping to the
+        // browser after a cancelled prompt was surprising from the splash screen.
+        self.mode = Mode::Viewer;
     }
 
     pub fn cancel_input(&mut self) {
@@ -359,6 +497,10 @@ impl App {
             InputKind::Search => self.set_search(&text),
             InputKind::Keyword | InputKind::Regex => {
                 if text.is_empty() {
+                    return;
+                }
+                if self.rules.len() >= MAX_RULES {
+                    self.status = Some(format!("highlight limit reached ({MAX_RULES})"));
                     return;
                 }
                 let is_regex = kind == InputKind::Regex;
@@ -403,6 +545,10 @@ impl App {
     // --- Search & filter -------------------------------------------------
 
     fn set_search(&mut self, text: &str) {
+        if !self.has_files() {
+            self.status = Some("open a file before searching".into());
+            return;
+        }
         if text.is_empty() {
             self.search = None;
             self.rebuild_views();
@@ -410,7 +556,7 @@ impl App {
             return;
         }
         // Search is always case-insensitive literal-substring matching.
-        match Regex::new(&format!("(?i){}", regex::escape(text))) {
+        match compile_search(text) {
             Ok(regex) => {
                 self.search = Some(Search {
                     raw: text.to_string(),
@@ -444,12 +590,17 @@ impl App {
     }
 
     fn search_hits(&self) -> usize {
+        if !self.has_files() {
+            return 0;
+        }
         match &self.search {
+            // Bound work per line so a pathological literal over a huge line
+            // cannot walk unbounded match counts during status reporting.
             Some(s) => self
                 .file()
                 .lines
                 .iter()
-                .map(|l| s.regex.find_iter(l).count())
+                .map(|l| s.regex.find_iter(l).take(MAX_MATCHES_PER_LINE).count())
                 .sum(),
             None => 0,
         }
@@ -734,12 +885,16 @@ impl App {
             let mut best: Option<Severity> = None;
             for (si, sig) in self.signatures.iter().enumerate() {
                 if sig.regex.is_match(line) {
-                    st.findings.push(Finding {
-                        file: st.file,
-                        line: st.line,
-                        sig: si,
-                    });
+                    // Still record severity on the line even after the findings
+                    // list is capped, so gutter markers remain useful.
                     best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
+                    if st.findings.len() < MAX_FINDINGS {
+                        st.findings.push(Finding {
+                            file: st.file,
+                            line: st.line,
+                            sig: si,
+                        });
+                    }
                 }
             }
             self.files[st.file].scan_severity[st.line] = best;
@@ -766,8 +921,14 @@ impl App {
         self.scan = None;
 
         let c = self.severity_counts();
+        let capped = total >= MAX_FINDINGS;
         self.status = Some(if total == 0 {
             "scan complete — nothing notable found".into()
+        } else if capped {
+            format!(
+                "scan: {total}+ findings (capped)  ({} crit, {} high, {} med, {} low, {} info)",
+                c[4], c[3], c[2], c[1], c[0]
+            )
         } else {
             format!(
                 "scan: {total} findings  ({} crit, {} high, {} med, {} low, {} info)",
@@ -915,5 +1076,120 @@ impl App {
 
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_name(prefix: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("loglens-{prefix}-{nonce}"))
+    }
+
+    #[test]
+    fn search_without_files_does_not_panic() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        assert!(!app.has_files());
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("error".chars());
+        app.confirm_input();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before searching")
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_direct_file() {
+        let path = tmp_name("huge");
+        {
+            let mut f = File::create(&path).unwrap();
+            // Write just over the cap using a repeating buffer.
+            let chunk = vec![b'a'; 1024 * 1024];
+            let mut written = 0u64;
+            while written <= MAX_LOG_BYTES {
+                f.write_all(&chunk).unwrap();
+                written += chunk.len() as u64;
+            }
+        }
+        match LogFile::load(&path, "huge.log".into(), &[]) {
+            Ok(_) => panic!("expected oversized file to be rejected"),
+            Err(e) => assert!(format!("{e}").contains("larger than")),
+        }
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn loads_sample_log() {
+        let path = Path::new("samples/sample.log");
+        if !path.exists() {
+            return;
+        }
+        let file = LogFile::load(path, "sample.log".into(), &[]).unwrap();
+        assert!(!file.lines.is_empty());
+        assert_eq!(file.matches.len(), file.lines.len());
+    }
+
+    #[test]
+    fn zero_width_regex_does_not_explode_matches() {
+        let path = tmp_name("zw");
+        fs::write(&path, "aaaa\nbbbb\n").unwrap();
+        let rule = rules::compile_rule("a*", true, false, 0).unwrap();
+        let file = LogFile::load(&path, "zw.log".into(), &[rule]).unwrap();
+        let total: usize = file.matches.iter().map(|m| m.len()).sum();
+        assert!(total <= MAX_MATCHES_PER_FILE);
+        for spans in &file.matches {
+            assert!(spans.len() <= MAX_MATCHES_PER_LINE);
+            assert!(spans.iter().all(|s| s.start < s.end));
+        }
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn input_buffer_respects_max_len() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars(std::iter::repeat_n('x', MAX_INPUT_LEN + 50));
+        assert_eq!(app.input_buffer.chars().count(), MAX_INPUT_LEN);
+    }
+
+    #[test]
+    fn split_lines_caps_count_and_length() {
+        // More lines than the cap.
+        let many = "x\n".repeat(MAX_LINES_PER_FILE + 10);
+        let (lines, truncated) = split_log_lines(&many);
+        assert_eq!(lines.len(), MAX_LINES_PER_FILE);
+        assert!(truncated);
+
+        // A single overlong line is truncated at a char boundary.
+        let long = "字".repeat((MAX_LINE_BYTES / 3) + 20);
+        let (lines, truncated) = split_log_lines(&long);
+        assert_eq!(lines.len(), 1);
+        assert!(truncated);
+        assert!(lines[0].ends_with('…'));
+        assert!(lines[0].len() <= MAX_LINE_BYTES + '…'.len_utf8());
+    }
+
+    #[test]
+    fn loads_truncated_many_short_lines() {
+        let path = tmp_name("manylines");
+        let mut f = File::create(&path).unwrap();
+        for _ in 0..(MAX_LINES_PER_FILE + 5) {
+            f.write_all(b"x\n").unwrap();
+        }
+        drop(f);
+        let file = LogFile::load(&path, "many.log".into(), &[]).unwrap();
+        assert_eq!(file.lines.len(), MAX_LINES_PER_FILE);
+        assert!(file.truncated);
+        fs::remove_file(&path).ok();
     }
 }
