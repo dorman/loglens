@@ -329,10 +329,18 @@ fn render_line_spans<'a>(
         points.insert(*e);
     }
 
-    let pts: Vec<usize> = points.into_iter().collect();
+    // Clamp/filter cut points to valid char boundaries within the line so a
+    // corrupt span can never panic the renderer with a slicing error.
+    let pts: Vec<usize> = points
+        .into_iter()
+        .filter(|&p| p <= len && text.is_char_boundary(p))
+        .collect();
     let mut spans = Vec::with_capacity(pts.len());
     for w in pts.windows(2) {
         let (a, b) = (w[0], w[1]);
+        if a >= b {
+            continue;
+        }
         if search_ranges.iter().any(|&(s, e)| s <= a && b <= e) {
             spans.push(Span::styled(
                 &text[a..b],
@@ -342,11 +350,12 @@ fn render_line_spans<'a>(
                     .add_modifier(Modifier::BOLD),
             ));
         } else if let Some(m) = rule_spans.iter().find(|m| m.start <= a && b <= m.end) {
+            let color = rules.get(m.rule).map(|r| r.color).unwrap_or(theme::ACCENT);
             spans.push(Span::styled(
                 &text[a..b],
                 Style::default()
                     .fg(theme::MATCH_FG)
-                    .bg(rules[m.rule].color)
+                    .bg(color)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {

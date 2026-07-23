@@ -157,14 +157,30 @@ pub fn builtin() -> Vec<Signature> {
     ];
 
     DEFS.iter()
-        .filter_map(|(sev, cat, title, explain, pat)| {
-            Regex::new(pat).ok().map(|regex| Signature {
+        .map(|(sev, cat, title, explain, pat)| {
+            let regex = Regex::new(pat).unwrap_or_else(|e| {
+                panic!("invalid built-in signature '{title}': {e}");
+            });
+            Signature {
                 severity: *sev,
                 category: cat,
                 title,
                 explain,
                 regex,
-            })
+            }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_builtin_signatures_compile() {
+        let sigs = builtin();
+        assert!(!sigs.is_empty());
+        // Every definition must compile — builtin() panics otherwise.
+        assert!(sigs.iter().any(|s| s.severity == Severity::Critical));
+    }
 }
