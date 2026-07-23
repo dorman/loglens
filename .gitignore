@@ -1,0 +1,4 @@
+/target
+
+# Large generated sample (regenerate locally for scan/progress testing)
+/samples/huge.log

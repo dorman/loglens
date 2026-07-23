@@ -1,0 +1,3 @@
+2026-07-22 09:58:00 INFO  Installer v14.2.1 launched
+2026-07-22 09:58:20 ERROR MSI rollback triggered, error 1603
+2026-07-22 09:58:21 WARN  Reverting registry changes

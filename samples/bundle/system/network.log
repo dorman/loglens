@@ -1,0 +1,4 @@
+2026-07-22 11:00:00 INFO  Network monitor started
+2026-07-22 11:00:12 WARN  DNS lookup slow for telemetry.example.com (2100ms)
+2026-07-22 11:00:30 ERROR Connection refused by 10.0.0.5:8443
+2026-07-22 11:00:31 INFO  Falling back to secondary endpoint
