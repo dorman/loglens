@@ -39,9 +39,15 @@ pub struct Regions {
     /// The scrollbar track column (empty when the file fits on screen).
     pub scrollbar: Rect,
     pub browser: Rect,
+    /// Exact rect of the browser's entry list (excludes borders/footer), so
+    /// mouse clicks map 1:1 onto entries.
+    pub browser_list: Rect,
     /// First visible entry index in the browser list (for click mapping).
     pub browser_top: usize,
     pub findings: Rect,
+    /// Exact rect of the findings list (excludes the severity bar and detail
+    /// box), so mouse clicks map 1:1 onto findings.
+    pub findings_list: Rect,
     /// First visible finding index (for click mapping).
     pub findings_top: usize,
 }
@@ -75,8 +81,11 @@ pub struct LogFile {
 
 impl LogFile {
     fn load(path: &Path, name: String, rules: &[Rule]) -> Result<Self> {
-        let content = fs::read_to_string(path)
+        // Read bytes and convert lossily: real-world diagnostic logs routinely
+        // contain stray non-UTF-8 bytes, which must not make the file unopenable.
+        let bytes = fs::read(path)
             .with_context(|| format!("failed to read '{}'", path.display()))?;
+        let content = String::from_utf8_lossy(&bytes);
         let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
         let line_count = lines.len();
@@ -566,13 +575,16 @@ impl App {
         }
         let start = self.file().view_pos;
         let view = self.file().view.clone();
-        for pos in (start + 1)..view.len() {
-            if self.is_active_match(view[pos]) {
-                self.file_mut().view_pos = pos;
-                self.ensure_cursor_visible();
-                self.clamp_scroll();
-                return;
-            }
+        let hit = view
+            .iter()
+            .enumerate()
+            .skip(start + 1)
+            .find(|&(_, &line)| self.is_active_match(line))
+            .map(|(pos, _)| pos);
+        if let Some(pos) = hit {
+            self.file_mut().view_pos = pos;
+            self.ensure_cursor_visible();
+            self.clamp_scroll();
         }
     }
 
@@ -828,7 +840,7 @@ impl App {
             return;
         }
         self.current = file;
-        if !self.file().view.iter().any(|&l| l == line) {
+        if !self.file().view.contains(&line) {
             self.filter_on = false;
             self.rebuild_views();
         }
@@ -859,7 +871,25 @@ impl App {
         if self.files.is_empty() {
             return;
         }
-        self.files.remove(self.current);
+        let removed = self.current;
+        self.files.remove(removed);
+
+        // Findings reference files by index: drop the closed file's findings
+        // and shift the rest down so they keep pointing at the right files.
+        self.scan = None;
+        self.findings.retain(|f| f.file != removed);
+        for f in &mut self.findings {
+            if f.file > removed {
+                f.file -= 1;
+            }
+        }
+        if self.findings.is_empty() {
+            self.show_findings = false;
+        }
+        self.findings_sel = self
+            .findings_sel
+            .min(self.findings.len().saturating_sub(1));
+
         if self.current >= self.files.len() {
             self.current = self.files.len().saturating_sub(1);
         }

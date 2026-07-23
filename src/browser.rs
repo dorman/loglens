@@ -92,14 +92,13 @@ impl Browser {
 
     /// Enter the selected directory. Returns true if a directory was entered.
     pub fn enter_dir(&mut self) -> bool {
-        if let Some(entry) = self.selected_entry() {
-            if entry.is_dir {
+        if let Some(entry) = self.selected_entry()
+            && entry.is_dir {
                 self.cwd = entry.path.clone();
                 self.selected = 0;
                 self.refresh();
                 return true;
             }
-        }
         false
     }
 

@@ -521,6 +521,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
         .split(inner);
     let list_area = parts[0];
     let footer_area = parts[1];
+    app.regions.browser_list = list_area;
 
     let list_height = list_area.height as usize;
     let top = if b.selected >= list_height {
@@ -532,12 +533,6 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     let end = (top + list_height).min(b.entries.len());
 
     let mut items: Vec<ListItem> = Vec::new();
-    if let Some(err) = &b.error {
-        items.push(ListItem::new(Line::from(Span::styled(
-            err.clone(),
-            Style::default().fg(theme::PALETTE[0]),
-        ))));
-    }
     for i in top..end {
         let entry = &b.entries[i];
         let is_sel = i == b.selected;
@@ -573,20 +568,29 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
 
     frame.render_widget(List::new(items), list_area);
 
-    let footer = Line::from(vec![
-        Span::styled("Enter", key()),
-        Span::styled(" open/enter  ", dim()),
-        Span::styled("Space", key()),
-        Span::styled(" mark  ", dim()),
-        Span::styled("o", key()),
-        Span::styled(" open marked  ", dim()),
-        Span::styled("O", key()),
-        Span::styled(" open folder/zip  ", dim()),
-        Span::styled("h", key()),
-        Span::styled(" up  ", dim()),
-        Span::styled("q", key()),
-        Span::styled(" close", dim()),
-    ]);
+    // A directory read error takes over the footer row (rendering it inside
+    // the list would shift entries and break mouse-click row mapping).
+    let footer = if let Some(err) = &b.error {
+        Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(theme::PALETTE[0]),
+        ))
+    } else {
+        Line::from(vec![
+            Span::styled("Enter", key()),
+            Span::styled(" open/enter  ", dim()),
+            Span::styled("Space", key()),
+            Span::styled(" mark  ", dim()),
+            Span::styled("o", key()),
+            Span::styled(" open marked  ", dim()),
+            Span::styled("O", key()),
+            Span::styled(" open folder/zip  ", dim()),
+            Span::styled("h", key()),
+            Span::styled(" up  ", dim()),
+            Span::styled("q", key()),
+            Span::styled(" close", dim()),
+        ])
+    };
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
@@ -628,6 +632,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     let bar_area = parts[0];
     let list_area = parts[1];
     let detail_area = parts[2];
+    app.regions.findings_list = list_area;
 
     frame.render_widget(Paragraph::new(severity_bar(c, bar_area.width)), bar_area);
 
@@ -645,7 +650,13 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
         let f = app.findings[i];
         let sig = &app.signatures[f.sig];
         let is_sel = i == app.findings_sel;
-        let file_name = &app.files[f.file].name;
+        // Defensive: findings are remapped when files close, but a panic mid-
+        // render would corrupt the terminal, so degrade instead of indexing.
+        let file_name = app
+            .files
+            .get(f.file)
+            .map(|lf| lf.name.as_str())
+            .unwrap_or("?");
 
         let badge = Span::styled(
             format!(" {:<4} ", sig.severity.label()),
@@ -679,7 +690,12 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     // Detail box: explanation + the matched line for the current selection.
     let detail = if let Some(f) = app.findings.get(app.findings_sel).copied() {
         let sig = &app.signatures[f.sig];
-        let excerpt = app.files[f.file].lines[f.line].trim();
+        let excerpt = app
+            .files
+            .get(f.file)
+            .and_then(|lf| lf.lines.get(f.line))
+            .map(|l| l.trim())
+            .unwrap_or("");
         vec![
             Line::from(vec![
                 Span::styled(
@@ -731,7 +747,9 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn centered_rect_lines(area: Rect, percent_x: u16, lines: u16) -> Rect {
-    let width = area.width * percent_x / 100;
+    // Widen to u32 for the multiply: `width * percent` overflows u16 on very
+    // wide terminals (e.g. 1100 cols * 60 > 65535).
+    let width = (area.width as u32 * percent_x as u32 / 100) as u16;
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(lines) / 2;
     Rect {

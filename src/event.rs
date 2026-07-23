@@ -17,19 +17,21 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        // While scanning, advance a chunk per frame and poll (non-blocking, with
-        // a small timeout for frame pacing) so the progress bar animates and the
-        // user can cancel with Esc/q.
+        // While scanning, advance a chunk per frame and drain the whole input
+        // queue (only Esc/q act, everything else is discarded) so the progress
+        // bar animates, cancel stays responsive, and buffered keystrokes don't
+        // burst-execute as commands the moment the scan finishes.
         if app.scanning() {
             app.scan_step(SCAN_CHUNK);
-            if event::poll(Duration::from_millis(8))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press
+            let mut timeout = Duration::from_millis(8);
+            while event::poll(timeout)? {
+                timeout = Duration::ZERO;
+                if let Event::Key(key) = event::read()?
+                    && key.kind == KeyEventKind::Press
                         && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
                     {
                         app.cancel_scan();
                     }
-                }
             }
             continue;
         }
@@ -46,6 +48,14 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 }
             }
             Event::Mouse(m) => handle_mouse(app, m),
+            // Bracketed paste: only meaningful while typing in the input prompt.
+            // Everywhere else it is deliberately ignored — without this, pasted
+            // text would be replayed as keystrokes ('q' quits, 'S' scans, …).
+            Event::Paste(text)
+                if app.mode == Mode::Input => {
+                    app.input_buffer
+                        .extend(text.chars().filter(|c| !c.is_control()));
+                }
             _ => {}
         }
     }
@@ -82,10 +92,11 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
         MouseEventKind::Down(MouseButton::Left) => {
             app.status = None;
             if app.show_findings {
-                // Click a finding row to jump straight to it.
-                let inner = inner(r.findings);
-                if hit(inner, col, row) {
-                    let idx = r.findings_top + (row - inner.y) as usize;
+                // Click a finding row to jump straight to it. Hit-test against
+                // the exact list rect (the popup also contains a severity bar
+                // and detail box, which must not map to findings).
+                if hit(r.findings_list, col, row) {
+                    let idx = r.findings_top + (row - r.findings_list.y) as usize;
                     if idx < app.findings.len() {
                         app.findings_sel = idx;
                         app.findings_jump();
@@ -94,10 +105,10 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if app.mode == Mode::Browser {
-                // Click a row in the browser popup to select it.
-                let inner = inner(r.browser);
-                if hit(inner, col, row) {
-                    let idx = r.browser_top + (row - inner.y) as usize;
+                // Click a row in the browser popup to select it (exact list
+                // rect: excludes the popup borders and footer row).
+                if hit(r.browser_list, col, row) {
+                    let idx = r.browser_top + (row - r.browser_list.y) as usize;
                     if idx < app.browser.entries.len() {
                         app.browser.selected = idx;
                     }
