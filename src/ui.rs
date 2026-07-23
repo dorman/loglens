@@ -251,6 +251,15 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
             .centered(),
         );
     }
+    // Current product version, shown under the logo.
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            concat!("Version ", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme::TEXT_DIM),
+        ))
+        .centered(),
+    );
     lines.push(Line::from(""));
     lines.push(
         Line::from(Span::styled(
