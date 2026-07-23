@@ -308,8 +308,16 @@ fn render_line_spans<'a>(
         return vec![Span::raw("")];
     }
 
+    // Cap ranges collected per painted line so a busy search over a long line
+    // cannot allocate unbounded style cut-points during render.
+    const MAX_SEARCH_RANGES: usize = 256;
     let search_ranges: Vec<(usize, usize)> = match search {
-        Some(re) => re.find_iter(text).map(|m| (m.start(), m.end())).collect(),
+        Some(re) => re
+            .find_iter(text)
+            .filter(|m| m.start() != m.end())
+            .take(MAX_SEARCH_RANGES)
+            .map(|m| (m.start(), m.end()))
+            .collect(),
         None => Vec::new(),
     };
 

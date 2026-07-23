@@ -9,7 +9,7 @@ use regex::Regex;
 
 use crate::browser::Browser;
 use crate::ingest::{self, MAX_LOG_BYTES};
-use crate::rules::{self, Rule};
+use crate::rules::{self, Rule, MAX_RULES};
 use crate::signatures::{self, Severity, Signature};
 
 /// Hard caps that keep hostile or pathological inputs from exhausting memory.
@@ -17,6 +17,13 @@ const MAX_MATCHES_PER_LINE: usize = 256;
 const MAX_MATCHES_PER_FILE: usize = 100_000;
 const MAX_FINDINGS: usize = 10_000;
 const MAX_OPEN_FILES: usize = 500;
+/// A 50 MB file of 1-byte lines would otherwise allocate tens of millions of
+/// `String`s; cap line count so RAM stays bounded inside the byte budget.
+const MAX_LINES_PER_FILE: usize = 250_000;
+/// Truncate individual lines beyond this many bytes (at a char boundary).
+const MAX_LINE_BYTES: usize = 32 * 1024;
+/// Soft budget across all open tabs — further opens are skipped once hit.
+const MAX_TOTAL_LINES: usize = 1_000_000;
 /// Max characters accepted in the keyword / regex / search prompt (incl. paste).
 pub const MAX_INPUT_LEN: usize = 4_096;
 
@@ -86,6 +93,8 @@ pub struct LogFile {
     pub top: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
+    /// True if the file was truncated (too many lines and/or overlong lines).
+    pub truncated: bool,
 }
 
 impl LogFile {
@@ -109,7 +118,7 @@ impl LogFile {
         // Read bytes and convert lossily: real-world diagnostic logs routinely
         // contain stray non-UTF-8 bytes, which must not make the file unopenable.
         let content = String::from_utf8_lossy(&bytes);
-        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+        let (lines, truncated) = split_log_lines(&content);
 
         let line_count = lines.len();
         let mut file = LogFile {
@@ -122,6 +131,7 @@ impl LogFile {
             view_pos: 0,
             top: 0,
             scan_severity: vec![None; line_count],
+            truncated,
         };
         file.rescan(rules);
         file.view = (0..file.lines.len()).collect();
@@ -211,6 +221,38 @@ impl LogFile {
     pub fn total_matches(&self) -> usize {
         self.rule_counts.iter().sum()
     }
+}
+
+/// Split log text into owned lines, truncating overlong lines and stopping at
+/// [`MAX_LINES_PER_FILE`]. Returns `(lines, truncated)`.
+fn split_log_lines(content: &str) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut truncated = false;
+    for line in content.lines() {
+        if lines.len() >= MAX_LINES_PER_FILE {
+            truncated = true;
+            break;
+        }
+        if line.len() > MAX_LINE_BYTES {
+            truncated = true;
+            let mut end = MAX_LINE_BYTES;
+            while end > 0 && !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            lines.push(format!("{}…", &line[..end]));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    // A trailing empty line after a final newline is usually noise; `str::lines`
+    // already drops it. Nothing else to do.
+    (lines, truncated)
+}
+
+/// Compile a case-insensitive literal search pattern with the same size/nest
+/// budgets as user highlight rules.
+pub fn compile_search(text: &str) -> Result<Regex> {
+    rules::compile_regex(&format!("(?i){}", regex::escape(text)))
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -351,13 +393,23 @@ impl App {
 
         let mut opened = 0;
         let mut skipped_cap = 0;
+        let mut truncated = 0;
+        let mut total_lines: usize = self.files.iter().map(|f| f.lines.len()).sum();
         for t in &targets {
-            if self.files.len() >= MAX_OPEN_FILES {
+            if self.files.len() >= MAX_OPEN_FILES || total_lines >= MAX_TOTAL_LINES {
                 skipped_cap += 1;
                 continue;
             }
             match LogFile::load(&t.path, t.name.clone(), &self.rules) {
                 Ok(mut f) => {
+                    if total_lines + f.lines.len() > MAX_TOTAL_LINES {
+                        skipped_cap += 1;
+                        continue;
+                    }
+                    if f.truncated {
+                        truncated += 1;
+                    }
+                    total_lines += f.lines.len();
                     f.rebuild_view(self.filter_on, self.search.as_ref().map(|s| &s.regex));
                     self.files.push(f);
                     opened += 1;
@@ -367,7 +419,7 @@ impl App {
         }
         if skipped_cap > 0 {
             errors.push(format!(
-                "open-file cap ({MAX_OPEN_FILES}) reached; skipped {skipped_cap}"
+                "open cap reached ({MAX_OPEN_FILES} files / {MAX_TOTAL_LINES} lines); skipped {skipped_cap}"
             ));
         }
 
@@ -375,10 +427,12 @@ impl App {
             self.current = self.files.len() - opened;
             self.mode = Mode::Viewer;
         }
-        self.status = Some(match (opened, errors.len()) {
-            (0, 0) => "no log files found".to_string(),
-            (n, 0) => format!("opened {n} file(s)"),
-            (n, e) => format!("opened {n}, {e} failed/skipped"),
+        self.status = Some(match (opened, errors.len(), truncated) {
+            (0, 0, _) => "no log files found".to_string(),
+            (n, 0, 0) => format!("opened {n} file(s)"),
+            (n, 0, t) => format!("opened {n} file(s) ({t} truncated to line/length caps)"),
+            (n, e, 0) => format!("opened {n}, {e} failed/skipped"),
+            (n, e, t) => format!("opened {n}, {e} failed/skipped ({t} truncated)"),
         });
     }
 
@@ -445,6 +499,10 @@ impl App {
                 if text.is_empty() {
                     return;
                 }
+                if self.rules.len() >= MAX_RULES {
+                    self.status = Some(format!("highlight limit reached ({MAX_RULES})"));
+                    return;
+                }
                 let is_regex = kind == InputKind::Regex;
                 match rules::compile_rule(&text, is_regex, self.ignore_case, self.rules.len()) {
                     Ok(rule) => {
@@ -498,7 +556,7 @@ impl App {
             return;
         }
         // Search is always case-insensitive literal-substring matching.
-        match Regex::new(&format!("(?i){}", regex::escape(text))) {
+        match compile_search(text) {
             Ok(regex) => {
                 self.search = Some(Search {
                     raw: text.to_string(),
@@ -536,11 +594,13 @@ impl App {
             return 0;
         }
         match &self.search {
+            // Bound work per line so a pathological literal over a huge line
+            // cannot walk unbounded match counts during status reporting.
             Some(s) => self
                 .file()
                 .lines
                 .iter()
-                .map(|l| s.regex.find_iter(l).count())
+                .map(|l| s.regex.find_iter(l).take(MAX_MATCHES_PER_LINE).count())
                 .sum(),
             None => 0,
         }
@@ -1100,5 +1160,36 @@ mod tests {
         app.begin_input(InputKind::Keyword);
         app.push_input_chars(std::iter::repeat_n('x', MAX_INPUT_LEN + 50));
         assert_eq!(app.input_buffer.chars().count(), MAX_INPUT_LEN);
+    }
+
+    #[test]
+    fn split_lines_caps_count_and_length() {
+        // More lines than the cap.
+        let many = "x\n".repeat(MAX_LINES_PER_FILE + 10);
+        let (lines, truncated) = split_log_lines(&many);
+        assert_eq!(lines.len(), MAX_LINES_PER_FILE);
+        assert!(truncated);
+
+        // A single overlong line is truncated at a char boundary.
+        let long = "字".repeat((MAX_LINE_BYTES / 3) + 20);
+        let (lines, truncated) = split_log_lines(&long);
+        assert_eq!(lines.len(), 1);
+        assert!(truncated);
+        assert!(lines[0].ends_with('…'));
+        assert!(lines[0].len() <= MAX_LINE_BYTES + '…'.len_utf8());
+    }
+
+    #[test]
+    fn loads_truncated_many_short_lines() {
+        let path = tmp_name("manylines");
+        let mut f = File::create(&path).unwrap();
+        for _ in 0..(MAX_LINES_PER_FILE + 5) {
+            f.write_all(b"x\n").unwrap();
+        }
+        drop(f);
+        let file = LogFile::load(&path, "many.log".into(), &[]).unwrap();
+        assert_eq!(file.lines.len(), MAX_LINES_PER_FILE);
+        assert!(file.truncated);
+        fs::remove_file(&path).ok();
     }
 }

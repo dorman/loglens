@@ -1,6 +1,8 @@
 use ratatui::style::Color;
 use regex::Regex;
 
+use crate::rules;
+
 /// Severity of a scan finding, ordered low → high so `max`/sort work directly.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -158,7 +160,7 @@ pub fn builtin() -> Vec<Signature> {
 
     DEFS.iter()
         .map(|(sev, cat, title, explain, pat)| {
-            let regex = Regex::new(pat).unwrap_or_else(|e| {
+            let regex = rules::compile_regex(pat).unwrap_or_else(|e| {
                 panic!("invalid built-in signature '{title}': {e}");
             });
             Signature {
