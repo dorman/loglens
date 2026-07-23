@@ -1,140 +1,104 @@
 # loglens
 
-A terminal UI that highlights the keywords and patterns you care about in log
-files — think Grammarly, but for logs. Point it at diagnostic logs (Splunk
-exports, Docker logs, support-tool bundles, etc.), tell it what to watch for,
-and it highlights every match in a distinct color, lets you search and filter
-down to just the lines that matter, and jumps you between hits so nothing gets
-missed.
+**Grammarly for logs** — an interactive terminal UI that highlights, scans, and
+triages diagnostic logs so you find what matters in seconds instead of
+scrolling for minutes.
 
-## Build
+Built for support specialists, L2 engineers, and DevOps who get handed log
+files or diagnostic bundles (AV support collections, Splunk exports, Docker
+logs) and need to spot trouble fast.
 
+```text
+╭ agent.log ─────────────────────────────────────────────────╮╭ Highlights (click to jump) ─╮
+│   3 │ 2026-07-22 10:00:05 WARN  Real-time protection module ││  ██ ERROR kw 4              │
+│   4 │ 2026-07-22 10:00:07 ERROR Failed to connect to update ││  ██ WARN  kw 3              │
+│   6 │ 2026-07-22 10:00:09 ERROR Certificate validation faile││                             │
+│   8 │ 2026-07-22 10:01:03 WARN  Suspicious process detected:││                             │
+╰────────────────────────────────────────────────────────────╯╰─────────────────────────────╯
+ 1/15 shown (15 total) · 7 hl · S scan  / search  f filter  n/N next  o open  a add  ? help
 ```
-cargo build --release
-```
-
-The binary is at `target/release/loglens`. To put it on your PATH:
-
-```
-cargo install --path .
-```
-
-## Running it
-
-Just launch it — no arguments required:
-
-```
-loglens
-```
-
-It opens a built-in **file browser** so you can import logs from inside the TUI.
-You can also pass files, folders, or archives directly:
-
-```
-loglens agent.log                 # a single file
-loglens ./diagnostic-bundle/      # every text log in a folder (recursive)
-loglens support-collection.zip    # every text log inside a zip archive
-loglens -k ERROR -i agent.log     # preload highlights via flags
-```
-
-### CLI options
-
-- `-k, --keyword <KEYWORD>` — literal keyword/phrase to highlight. Repeatable,
-  or comma-separated within one flag (`-k "timeout,rollback"`).
-- `-r, --regex <PATTERN>` — regex pattern to highlight. Repeatable.
-- `-i, --ignore-case` — case-insensitive matching for keywords and regexes.
-
-Everything reachable from flags is also reachable live from inside the TUI —
-add highlights with `a`/`r`, import more files with `o`, etc.
-
-## Importing logs (file browser)
-
-| Key             | Action                                        |
-| --------------- | --------------------------------------------- |
-| `j` / `k`       | move selection                                |
-| `Enter` / `l`   | enter a directory, or open the selected file  |
-| `h` / `Backspace`| go to the parent directory                   |
-| `Space`         | mark / unmark a file                          |
-| `o`             | open all marked files                         |
-| `O`             | open the selected folder (or `.zip`) recursively |
-| `.`             | show / hide hidden files                      |
-| `q` / `Esc`     | close the browser                             |
-
-A folder or `.zip` is loaded recursively; every text log inside becomes its own
-tab (binary files are skipped automatically).
-
-## Viewer
-
-| Key                | Action                              |
-| ------------------ | ----------------------------------- |
-| `j` / `↓`, `k` / `↑`| scroll one line                     |
-| `Ctrl-d` / `Ctrl-u`| scroll one page                     |
-| `g` / `G`          | jump to top / bottom                |
-| `n` / `N`          | next / previous match               |
-| `Tab` / `Shift-Tab`| switch between open files           |
-| `o`                | open the file browser (import more) |
-| `w`                | close the current file              |
-| `?`                | toggle help overlay                 |
-| `q`                | quit                                |
-
-## Scan — the fast lane
-
-Press **`S`** and loglens scans every open file against a built-in library of
-known-bad signatures — no keywords required. Large bundles show a **live
-progress bar** (with a running findings count) and can be cancelled with `Esc`.
-When it finishes you get a **findings panel** ranked by severity, topped with a
-**severity distribution bar** that shows the crit/high/med/low/info mix at a
-glance:
-
-- Each finding shows its severity (`CRIT`/`HIGH`/`MED`/`LOW`/`INFO`), a title,
-  and the `file:line` it was found on.
-- The detail box explains *why it matters* in plain English and shows the
-  matched line.
-- `j`/`k` move, `Enter` (or click) jumps straight to that line, `q` closes.
-
-After a scan, flagged lines get a colored severity dot in the gutter, so trouble
-stands out even with the panel closed. The signature library covers signals such
-as encoded PowerShell, process injection, living-off-the-land binaries, clock
-rollback, certificate-validation failures, corrupt definition databases,
-crashes, resource exhaustion, update/install failures, and access-denied errors.
-
-## Mouse
-
-| Action                         | Result                                        |
-| ------------------------------ | --------------------------------------------- |
-| wheel over the log             | scroll up / down                              |
-| click a line                   | move the cursor to it                         |
-| click a highlight in the legend| jump to that highlight's next match (repeat to step) |
-| click / wheel in the browser popup | select an entry                          |
-
-A scrollbar on the right of the log pane shows your position in the file.
-
-## Search & filter
-
-| Key   | Action                                                          |
-| ----- | -------------------------------------------------------------- |
-| `/`   | search (case-insensitive); `n`/`N` walk the results, `Esc` clears |
-| `f`   | filter — collapse the view to only the lines that match         |
-
-With a search active, `f` shows only lines matching the search. With no search,
-`f` shows only lines that hit one of your highlights — turning a 10,000-line log
-into just the handful worth reading. Original line numbers are preserved.
 
 ## Highlights
 
-| Key   | Action                                          |
-| ----- | ----------------------------------------------- |
-| `a`   | add a keyword highlight (type it, `Enter`)      |
-| `r`   | add a regex highlight                           |
-| `x`   | remove the last highlight                       |
-| `i`   | toggle case-insensitive matching for all rules  |
-| `l`   | toggle the highlights legend                    |
+- **One-key scan (`S`)** — zero-config detection of known-bad signals (encoded
+  PowerShell, cert failures, clock rollback, crashes, …), ranked by severity
+  with plain-English explanations and jump-to-line
+- **Keyword & regex highlighting** — every tracked term gets its own color;
+  add/remove live from inside the TUI
+- **Search & filter** — `/` to search, `f` to collapse a 10,000-line log down
+  to only the lines that matter
+- **Bundle-aware** — open a whole folder or `.zip` diagnostic collection;
+  every log inside becomes a tab, binaries are skipped automatically
+- **Full mouse support** — wheel scroll, click-drag scrollbar, click a
+  highlight to jump through its matches
 
-Each rule gets its own color, shown in the legend panel with a live per-file
-match count.
+## Quick start
 
-### Example
+### 1. Install Rust (once)
 
+macOS / Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 ```
-loglens -i -k ERROR -k WARN -k ALERT -r 'powershell\.exe.*-enc' ./bundle/
+
+Windows: install from <https://rustup.rs>.
+
+### 2. Install loglens
+
+```sh
+git clone https://github.com/dorman/loglens.git
+cd loglens
+cargo install --path .
 ```
+
+This builds a release binary and puts `loglens` on your PATH
+(`~/.cargo/bin`). Teammates with repo access can skip the clone:
+
+```sh
+cargo install --git https://github.com/dorman/loglens
+```
+
+### 3. Run it
+
+```sh
+loglens                      # opens the welcome screen — press o to browse
+loglens agent.log            # open one file
+loglens ./diag-bundle/       # open every log in a folder (recursive)
+loglens support-logs.zip     # open every log inside a zip
+```
+
+First moves once you're in:
+
+| Press | To |
+| ----- | -- |
+| `S`   | scan everything for known-bad signatures, ranked by severity |
+| `a`   | add a keyword highlight (each gets its own color) |
+| `/`   | search |
+| `f`   | filter down to only matching lines |
+| `?`   | full keybinding help |
+| `q`   | quit |
+
+Try it on the included samples:
+
+```sh
+loglens samples/bundle       # a fake AV diagnostic bundle — press S
+```
+
+## Documentation
+
+The full guide — every feature, keybinding, workflow, and troubleshooting —
+lives in **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
+
+## Development
+
+```sh
+cargo build            # debug build
+cargo clippy           # lints (kept at zero warnings)
+cargo run -- samples/bundle
+```
+
+Project layout: `src/app.rs` (state & logic), `src/ui.rs` (rendering),
+`src/event.rs` (input), `src/ingest.rs` (file/folder/zip loading),
+`src/signatures.rs` (the built-in detection library), `src/theme.rs` (colors).

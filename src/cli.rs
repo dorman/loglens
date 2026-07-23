@@ -2,12 +2,13 @@ use clap::Parser;
 
 /// loglens - highlight the things that matter in your logs.
 ///
-/// Run with no arguments to open the built-in file browser, or pass log files
-/// directly. Keywords and regexes can also be added live from inside the TUI.
+/// Run with no arguments for the welcome screen (press `o` to browse for
+/// logs), or pass files, folders, or .zip bundles directly. Keywords and
+/// regexes can also be added live from inside the TUI.
 #[derive(Parser, Debug)]
 #[command(name = "loglens", version, about, long_about = None)]
 pub struct Cli {
-    /// Log file(s) to open. Omit to start in the file browser.
+    /// Files, folders, or .zip archives to open (folders/zips recurse).
     pub files: Vec<String>,
 
     /// Literal keyword to highlight. Repeatable, or comma-separated within one flag.
