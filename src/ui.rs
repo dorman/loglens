@@ -600,10 +600,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             base,
         )])
     } else {
-        Line::from(vec![Span::styled(
-            " o open  ·  ? help  ·  q quit",
-            base,
-        )])
+        Line::from(vec![Span::styled(" o open  ·  ? help  ·  q quit", base)])
     };
     frame.render_widget(Paragraph::new(line).style(base), area);
 }
