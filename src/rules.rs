@@ -3,7 +3,7 @@ use ratatui::style::Color;
 use regex::{Regex, RegexBuilder};
 
 use crate::cli::Cli;
-use crate::theme;
+use crate::theme::Theme;
 
 /// Max highlight rules a session may hold (CLI + live adds).
 pub const MAX_RULES: usize = 64;
@@ -14,10 +14,6 @@ pub const MAX_REGEX_PATTERN_LEN: usize = 512;
 const REGEX_SIZE_LIMIT: usize = 1 << 20; // 1 MiB
 /// Cap nesting depth so pathological patterns fail at compile time.
 const REGEX_NEST_LIMIT: u32 = 32;
-
-pub fn color_for(index: usize) -> Color {
-    theme::rule_color(index)
-}
 
 #[derive(Clone)]
 pub struct Rule {
@@ -48,6 +44,7 @@ pub fn compile_rule(
     is_regex: bool,
     ignore_case: bool,
     color_index: usize,
+    theme: &Theme,
 ) -> Result<Rule> {
     if is_regex && label.len() > MAX_REGEX_PATTERN_LEN {
         bail!("regex too long (max {MAX_REGEX_PATTERN_LEN} bytes)");
@@ -71,13 +68,13 @@ pub fn compile_rule(
     })?;
     Ok(Rule {
         label: label.to_string(),
-        color: color_for(color_index),
+        color: theme.rule_color(color_index),
         regex,
         is_regex,
     })
 }
 
-pub fn build_rules(cli: &Cli) -> Result<Vec<Rule>> {
+pub fn build_rules(cli: &Cli, theme: &Theme) -> Result<Vec<Rule>> {
     let mut rules = Vec::new();
 
     for kw in &cli.keywords {
@@ -88,14 +85,26 @@ pub fn build_rules(cli: &Cli) -> Result<Vec<Rule>> {
         if rules.len() >= MAX_RULES {
             bail!("too many highlight rules (max {MAX_RULES})");
         }
-        rules.push(compile_rule(kw, false, cli.ignore_case, rules.len())?);
+        rules.push(compile_rule(
+            kw,
+            false,
+            cli.ignore_case,
+            rules.len(),
+            theme,
+        )?);
     }
 
     for pat in &cli.regexes {
         if rules.len() >= MAX_RULES {
             bail!("too many highlight rules (max {MAX_RULES})");
         }
-        rules.push(compile_rule(pat, true, cli.ignore_case, rules.len())?);
+        rules.push(compile_rule(
+            pat,
+            true,
+            cli.ignore_case,
+            rules.len(),
+            theme,
+        )?);
     }
 
     Ok(rules)
@@ -106,29 +115,32 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    fn dark() -> Theme {
+        Theme::dark()
+    }
+
     #[test]
     fn rejects_overlong_regex() {
         let pat = "a".repeat(MAX_REGEX_PATTERN_LEN + 1);
-        assert!(compile_rule(&pat, true, false, 0).is_err());
+        assert!(compile_rule(&pat, true, false, 0, &dark()).is_err());
     }
 
     #[test]
     fn rejects_deeply_nested_regex() {
-        // Nesting beyond REGEX_NEST_LIMIT should fail at compile time.
         let pat = format!("{}x{}", "(".repeat(40), ")".repeat(40));
-        assert!(compile_rule(&pat, true, false, 0).is_err());
+        assert!(compile_rule(&pat, true, false, 0, &dark()).is_err());
     }
 
     #[test]
     fn compiles_simple_keyword() {
-        let rule = compile_rule("ERROR", false, true, 0).unwrap();
+        let rule = compile_rule("ERROR", false, true, 0, &dark()).unwrap();
         assert!(rule.regex.is_match("an ERROR occurred"));
         assert!(!rule.is_regex);
     }
 
     #[test]
     fn keyword_is_literal_not_regex_metachar() {
-        let rule = compile_rule("file.txt", false, false, 0).unwrap();
+        let rule = compile_rule("file.txt", false, false, 0, &dark()).unwrap();
         assert!(rule.regex.is_match("see file.txt here"));
         assert!(
             !rule.regex.is_match("see fileXtxt here"),
@@ -138,9 +150,9 @@ mod tests {
 
     #[test]
     fn ignore_case_applies_to_keyword_and_regex() {
-        let kw = compile_rule("error", false, true, 0).unwrap();
+        let kw = compile_rule("error", false, true, 0, &dark()).unwrap();
         assert!(kw.regex.is_match("ERROR"));
-        let re = compile_rule(r"time\s*out", true, true, 1).unwrap();
+        let re = compile_rule(r"time\s*out", true, true, 1, &dark()).unwrap();
         assert!(re.regex.is_match("TIME OUT"));
     }
 
@@ -157,7 +169,7 @@ mod tests {
             "-i",
         ])
         .unwrap();
-        let rules = build_rules(&cli).unwrap();
+        let rules = build_rules(&cli, &dark()).unwrap();
         let labels: Vec<_> = rules.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["ERROR", "timeout", "rollback"]);
         assert!(cli.ignore_case);
@@ -166,7 +178,7 @@ mod tests {
     #[test]
     fn cli_invalid_regex_fails_build_rules() {
         let cli = Cli::try_parse_from(["loglens", "-r", "("]).unwrap();
-        match build_rules(&cli) {
+        match build_rules(&cli, &dark()) {
             Ok(_) => panic!("invalid regex should fail"),
             Err(e) => {
                 let err = e.to_string();
@@ -183,6 +195,6 @@ mod tests {
             args.push(format!("kw{i}"));
         }
         let cli = Cli::try_parse_from(&args).unwrap();
-        assert!(build_rules(&cli).is_err());
+        assert!(build_rules(&cli, &dark()).is_err());
     }
 }

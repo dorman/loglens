@@ -138,6 +138,7 @@ You can also click an entry to select it, and wheel-scroll the list.
 
 - `Tab` / `]` — next tab
 - `Shift-Tab` / `[` — previous tab
+- click a tab — switch to that file
 - `w` — close the current file
 - `o` — reopen the browser to add more
 
@@ -161,8 +162,13 @@ Navigation:
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
-The status bar shows `cursor/shown (total)` lines, the number of highlight
-matches, and the most useful keys.
+The status bar stays short on purpose: position, highlight count, filter/search
+state, and the active theme — full keybindings live behind `?`. Log lines are
+soft-tinted by level (`ERROR` / `WARN` / `INFO` / `DEBUG`) even before you add
+highlights, so severity stands out while scrolling.
+
+Themes: press **`t`** to cycle `dark` → `light` → `hc` (high-contrast), or start
+with `--theme light` / `--theme hc`. Highlight rule colors follow the theme.
 
 ---
 
@@ -249,6 +255,7 @@ keyword colors.
 | ------ | ------ |
 | Wheel over the log | scroll |
 | Click a log line | move the cursor there |
+| Click a file tab | switch to that file |
 | Click the scrollbar track | jump to that position |
 | Drag the scrollbar thumb | continuous scroll |
 | Click a highlight in the legend | jump through that rule's matches |
@@ -266,7 +273,7 @@ Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
 `n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`o` file browser · `w` close file · `q` quit
+`t` theme · `o` file browser · `w` close file · `q` quit
 
 **Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
 
@@ -292,13 +299,14 @@ loglens [OPTIONS] [FILES]...
 | `-k, --keyword <KEYWORD>` | literal keyword highlight; repeatable or comma-separated (`-k "timeout,rollback"`) |
 | `-r, --regex <PATTERN>` | regex highlight; repeatable |
 | `-i, --ignore-case` | case-insensitive matching for all rules |
+| `-t, --theme <THEME>` | `dark` (default), `light`, or `hc` / `high-contrast` (also cycle with `t`) |
 | `--version` | print version |
 | `--help` | print CLI help |
 
 Example — open a bundle with a standing rule set:
 
 ```sh
-loglens -i -k ERROR -k WARN -k "access denied" \
+loglens -i -t light -k ERROR -k WARN -k "access denied" \
         -r 'powershell\.exe.*-enc' \
         ./diagnostic-bundle/
 ```

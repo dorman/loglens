@@ -94,7 +94,7 @@ fn hit(rect: Rect, col: u16, row: u16) -> bool {
 
 fn handle_mouse(app: &mut App, m: MouseEvent) {
     let (col, row) = (m.column, m.row);
-    let r = app.regions;
+    let r = app.regions.clone();
 
     match m.kind {
         MouseEventKind::ScrollDown => {
@@ -143,6 +143,13 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
             if app.mode != Mode::Viewer {
                 return;
+            }
+            // Click a file tab -> switch to that file.
+            for (i, tab) in r.tab_hits.iter().enumerate() {
+                if hit(*tab, col, row) {
+                    app.select_file(i);
+                    return;
+                }
             }
             // Click the scrollbar track -> jump to that position (and start a drag).
             if r.scrollbar.height > 0 && hit(r.scrollbar, col, row) {
@@ -304,6 +311,7 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('r') => app.begin_input(InputKind::Regex),
         KeyCode::Char('x') => app.remove_last_rule(),
         KeyCode::Char('i') => app.toggle_ignore_case(),
+        KeyCode::Char('t') => app.cycle_theme(),
         KeyCode::Char('l') => app.toggle_legend(),
         KeyCode::Char('?') => app.toggle_help(),
         _ => {}
@@ -434,6 +442,60 @@ mod tests {
         handle_viewer(&mut app, KeyCode::Tab, KeyModifiers::NONE);
         assert_eq!(app.current, 0);
         handle_viewer(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
+        assert_eq!(app.current, 1);
+    }
+
+    #[test]
+    fn cycle_theme_key_recolors_rules() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        let before = app.rules[0].color;
+        assert_eq!(app.theme.id, crate::theme::ThemeId::Dark);
+        handle_viewer(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(app.theme.id, crate::theme::ThemeId::Light);
+        assert_ne!(app.rules[0].color, before);
+        assert!(app.status.as_deref().unwrap_or("").contains("theme: light"));
+        handle_viewer(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(app.theme.id, crate::theme::ThemeId::HighContrast);
+        handle_viewer(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(app.theme.id, crate::theme::ThemeId::Dark);
+    }
+
+    #[test]
+    fn mouse_click_selects_tab() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = App::new(
+            &["samples/sample.log".into(), "samples/network.log".into()],
+            Vec::new(),
+            false,
+        )
+        .unwrap();
+        app.regions.tab_hits = vec![
+            Rect {
+                x: 2,
+                y: 1,
+                width: 12,
+                height: 1,
+            },
+            Rect {
+                x: 15,
+                y: 1,
+                width: 14,
+                height: 1,
+            },
+        ];
+        assert_eq!(app.current, 0);
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 16,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         assert_eq!(app.current, 1);
     }
 
