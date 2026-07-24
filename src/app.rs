@@ -11,7 +11,7 @@ use crate::browser::Browser;
 use crate::ingest::{self, MAX_LOG_BYTES};
 use crate::rules::{self, MAX_RULES, Rule};
 use crate::signatures::{self, Severity, Signature};
-use crate::theme::{Theme, ThemeId};
+use crate::theme::Theme;
 
 /// Hard caps that keep hostile or pathological inputs from exhausting memory.
 const MAX_MATCHES_PER_LINE: usize = 256;
@@ -313,7 +313,7 @@ pub struct App {
     pub scrollbar_drag: bool,
     pub status: Option<String>,
     pub should_quit: bool,
-    /// Active UI palette (switch with `t` / `--theme`).
+    /// Active UI palette (dark theme).
     pub theme: Theme,
     /// Temp directories created while extracting zip bundles; removed on Drop.
     temp_dirs: Vec<PathBuf>,
@@ -328,17 +328,7 @@ impl Drop for App {
 }
 
 impl App {
-    #[cfg(test)]
     pub fn new(inputs: &[String], rules: Vec<Rule>, ignore_case: bool) -> Result<Self> {
-        Self::new_with_theme(inputs, rules, ignore_case, ThemeId::Dark)
-    }
-
-    pub fn new_with_theme(
-        inputs: &[String],
-        rules: Vec<Rule>,
-        ignore_case: bool,
-        theme_id: ThemeId,
-    ) -> Result<Self> {
         let start_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let mut app = App {
             rules,
@@ -364,7 +354,7 @@ impl App {
             scrollbar_drag: false,
             status: None,
             should_quit: false,
-            theme: Theme::from_id(theme_id),
+            theme: Theme::dark(),
             temp_dirs: Vec::new(),
         };
 
@@ -584,16 +574,6 @@ impl App {
         } else {
             format!("case-insensitive: {case}")
         });
-    }
-
-    /// Cycle dark → light → high-contrast and recolor highlight rules.
-    pub fn cycle_theme(&mut self) {
-        let next = self.theme.id.next();
-        self.theme = Theme::from_id(next);
-        for (i, rule) in self.rules.iter_mut().enumerate() {
-            rule.color = self.theme.rule_color(i);
-        }
-        self.status = Some(format!("theme: {}", self.theme.id.label()));
     }
 
     // --- Search & filter -------------------------------------------------

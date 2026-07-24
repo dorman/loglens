@@ -595,15 +595,13 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             }
             None => String::new(),
         };
-        let theme_label = t.id.label();
         Line::from(vec![Span::styled(
-            format!(" {pos}/{shown} · {hl} hl{filter}{search} · {theme_label}  ·  ? help"),
+            format!(" {pos}/{shown} · {hl} hl{filter}{search}  ·  ? help"),
             base,
         )])
     } else {
-        let label = t.id.label();
         Line::from(vec![Span::styled(
-            format!(" o open  ·  ? help  ·  q quit  ·  theme {label}"),
+            " o open  ·  ? help  ·  q quit",
             base,
         )])
     };
@@ -937,7 +935,6 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  click a tab     switch open file"),
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
-        Line::from("  t               cycle color theme"),
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
