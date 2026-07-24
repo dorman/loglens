@@ -34,30 +34,14 @@ logs) and need to spot trouble fast.
 
 ## Quick start
 
-### 1. Install (pick one)
+### 1. Install
 
-**Prebuilt binary** (no Rust toolchain required) — from
-[GitHub Releases](https://github.com/dorman/loglens/releases):
-
-```sh
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/dorman/loglens/master/scripts/install.sh | bash
-loglens --version
-```
-
-Or download the archive for your platform from the latest release, unpack it,
-and put `loglens` on your `PATH`.
-
-**From crates.io** (requires Rust 1.85+):
+**Current (pre-release):** install from source. A public binary / crates.io
+release is planned for later; until then there are no GitHub Release assets
+and the crate is not published.
 
 ```sh
-cargo install loglens --locked
-```
-
-**From source**:
-
-```sh
-# Install Rust once: https://rustup.rs  (need 1.85+)
+# Requires Rust 1.85+ — https://rustup.rs
 git clone https://github.com/dorman/loglens.git
 cd loglens
 cargo install --path . --locked
@@ -68,6 +52,11 @@ Teammates with repo access can also:
 ```sh
 cargo install --git https://github.com/dorman/loglens --locked
 ```
+
+**Later (public release):** prebuilt archives will ship via
+[GitHub Releases](https://github.com/dorman/loglens/releases) (see
+`scripts/install.sh`), and `cargo install loglens` will work from crates.io
+once published. Do not tag or publish until testing is complete.
 
 ### 2. Run it
 

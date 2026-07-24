@@ -26,32 +26,17 @@ This guide covers everything. For a 2-minute intro, see the
 
 ## Installation
 
-### Prebuilt binary (recommended)
+loglens is in **pre-release**. Install from source today. Prebuilt GitHub
+Release binaries and a crates.io publish are planned for a later public
+release — do not treat those paths as live until a `v*` tag exists and the
+crate has been published.
 
-No Rust toolchain required. Download the archive for your OS/CPU from
-[GitHub Releases](https://github.com/dorman/loglens/releases), or run:
+### From a clone (current)
 
-```sh
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/dorman/loglens/master/scripts/install.sh | bash
-loglens --version
-```
-
-Windows: download the `.zip` asset from the latest release, unpack it, and add
-the folder containing `loglens.exe` to your `PATH` (Windows Terminal
-recommended).
-
-### From crates.io
-
-Requires Rust **1.85+**:
+Requires Rust **1.85+** (`edition = "2024"`):
 
 ```sh
-cargo install loglens --locked
-```
-
-### From a clone
-
-```sh
+# https://rustup.rs
 git clone https://github.com/dorman/loglens.git
 cd loglens
 cargo install --path . --locked
@@ -71,14 +56,29 @@ cargo install --git https://github.com/dorman/loglens --locked
 loglens --version
 ```
 
-### Publishing a release (maintainers)
+### Planned: prebuilt binary & crates.io
+
+When the public release lands:
+
+- Download OS/CPU archives from
+  [GitHub Releases](https://github.com/dorman/loglens/releases), or run
+  `scripts/install.sh` on Linux/macOS.
+- Or: `cargo install loglens --locked` from crates.io.
+
+### Publishing a release (maintainers — after testing)
+
+Only after merge to `master` and thorough testing (target: later public
+release). Then tag for GitHub Release binaries; publish to crates.io
+separately when ready:
 
 ```sh
+git checkout master
+git pull
 git tag v0.21.0
 git push origin v0.21.0
-# GitHub Actions builds Linux/macOS/Windows archives and attaches them
-# to the release. Then, with crates.io credentials configured:
-cargo publish
+# GitHub Actions attaches Linux/macOS/Windows archives to the release.
+# crates.io (optional, separate step — needs credentials):
+#   cargo publish
 ```
 
 ### Updating
