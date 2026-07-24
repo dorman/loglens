@@ -609,7 +609,8 @@ impl App {
     ///
     /// Empty input is a no-op. Values past the end of the file clamp to the
     /// last line (vim-style). Out-of-range zeros and non-numeric text report
-    /// a status message instead of moving.
+    /// a status message instead of moving. Empty files report that there is
+    /// nothing to jump to (rather than pretending line 1 exists).
     fn go_to_line_number(&mut self, text: &str) {
         if text.is_empty() {
             return;
@@ -626,7 +627,11 @@ impl App {
             self.status = Some("line numbers start at 1".into());
             return;
         }
-        let last = self.file().lines.len().max(1);
+        let last = self.file().lines.len();
+        if last == 0 {
+            self.status = Some("file has no lines".into());
+            return;
+        }
         let line = n.min(last) - 1; // convert to 0-based
         let file = self.current;
         self.jump_to_line(file, line);
@@ -2513,6 +2518,39 @@ mod tests {
                 .unwrap_or("")
                 .contains("invalid line number")
         );
+    }
+
+    #[test]
+    fn go_to_line_rejects_empty_file_without_false_success() {
+        // Regression: lines.len().max(1) treated empty files as 1-line, so
+        // confirming `:1` reported "jumped to L1" even though no content exists.
+        let path = tmp_name("empty-goto");
+        fs::write(&path, b"").unwrap();
+        let mut app = app_with_paths(&[path.to_str().expect("utf8 temp path")]);
+        assert!(app.file().lines.is_empty());
+        assert!(app.file().view.is_empty());
+        let view_pos_before = app.file().view_pos;
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("1".chars());
+        app.confirm_input();
+
+        assert!(
+            app.status.as_deref().unwrap_or("").contains("no lines"),
+            "empty file must not report a successful jump: {:?}",
+            app.status
+        );
+        assert!(
+            !app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("jumped to"),
+            "must not claim a jump landed: {:?}",
+            app.status
+        );
+        assert_eq!(app.file().view_pos, view_pos_before);
+        assert!(app.file().view.is_empty());
+        fs::remove_file(&path).ok();
     }
 
     #[test]
