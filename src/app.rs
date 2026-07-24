@@ -1022,6 +1022,8 @@ impl App {
         }
         let f = self.file_mut();
         let Some(&line) = f.view.get(f.view_pos) else {
+            // File open but filter emptied the view (or cursor off-end).
+            self.status = Some("nothing to bookmark".into());
             return;
         };
         match f.bookmarks.binary_search(&line) {
@@ -2566,6 +2568,23 @@ mod tests {
         app.confirm_input();
         assert!(!app.filter_on);
         assert_eq!(app.file().view[app.file().view_pos], 0);
+    }
+
+    #[test]
+    fn toggle_bookmark_empty_view_sets_status() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.set_search("this-will-not-match-zzzz");
+        app.filter_on = true;
+        app.rebuild_views();
+        assert!(app.file().view.is_empty());
+        app.toggle_bookmark();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("nothing to bookmark")
+        );
+        assert!(app.file().bookmarks.is_empty());
     }
 
     #[test]
