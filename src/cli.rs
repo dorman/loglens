@@ -1,4 +1,6 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+use crate::theme::ThemeId;
 
 /// loglens - highlight the things that matter in your logs.
 ///
@@ -23,4 +25,27 @@ pub struct Cli {
     /// Match case-insensitively (applies to both keywords and regexes).
     #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
+
+    /// Color theme (also cycleable with `t` in the viewer).
+    #[arg(short = 't', long = "theme", value_enum, default_value_t = ThemeCli::Dark)]
+    pub theme: ThemeCli,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum ThemeCli {
+    #[default]
+    Dark,
+    Light,
+    #[value(name = "hc", alias = "high-contrast")]
+    HighContrast,
+}
+
+impl From<ThemeCli> for ThemeId {
+    fn from(value: ThemeCli) -> Self {
+        match value {
+            ThemeCli::Dark => ThemeId::Dark,
+            ThemeCli::Light => ThemeId::Light,
+            ThemeCli::HighContrast => ThemeId::HighContrast,
+        }
+    }
 }

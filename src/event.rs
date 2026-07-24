@@ -94,7 +94,7 @@ fn hit(rect: Rect, col: u16, row: u16) -> bool {
 
 fn handle_mouse(app: &mut App, m: MouseEvent) {
     let (col, row) = (m.column, m.row);
-    let r = app.regions;
+    let r = app.regions.clone();
 
     match m.kind {
         MouseEventKind::ScrollDown => {
@@ -143,6 +143,13 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
             if app.mode != Mode::Viewer {
                 return;
+            }
+            // Click a file tab -> switch to that file.
+            for (i, tab) in r.tab_hits.iter().enumerate() {
+                if hit(*tab, col, row) {
+                    app.select_file(i);
+                    return;
+                }
             }
             // Click the scrollbar track -> jump to that position (and start a drag).
             if r.scrollbar.height > 0 && hit(r.scrollbar, col, row) {
@@ -304,6 +311,7 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('r') => app.begin_input(InputKind::Regex),
         KeyCode::Char('x') => app.remove_last_rule(),
         KeyCode::Char('i') => app.toggle_ignore_case(),
+        KeyCode::Char('t') => app.cycle_theme(),
         KeyCode::Char('l') => app.toggle_legend(),
         KeyCode::Char('?') => app.toggle_help(),
         _ => {}
