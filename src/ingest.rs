@@ -122,7 +122,10 @@ fn collect_inner(dir: &Path, base: &Path, depth: usize, out: &mut Vec<LoadTarget
                 .strip_prefix(base)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| file_name(&path));
-            out.push(LoadTarget { path, name: display });
+            out.push(LoadTarget {
+                path,
+                name: display,
+            });
         }
     }
 }
@@ -183,8 +186,8 @@ fn extract_zip(path: &Path) -> Result<ResolveOutcome> {
             MAX_ZIP_ARCHIVE_BYTES / (1024 * 1024)
         );
     }
-    let file = File::open(path)
-        .with_context(|| format!("failed to open archive '{}'", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("failed to open archive '{}'", path.display()))?;
     let mut archive = zip::ZipArchive::new(file)
         .with_context(|| format!("'{}' is not a valid zip archive", path.display()))?;
 
@@ -195,7 +198,13 @@ fn extract_zip(path: &Path) -> Result<ResolveOutcome> {
     // Sanitize stem so it cannot inject path separators into the temp dir name.
     let stem: String = stem
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(64)
         .collect();
     let nonce = SystemTime::now()
@@ -275,7 +284,10 @@ mod tests {
         assert!(!path_within(root, Path::new("/tmp/other/a.log")));
         assert!(!path_within(root, Path::new("/etc/passwd")));
         // `..` after a successful strip_prefix must still be rejected.
-        assert!(!path_within(root, Path::new("/tmp/loglens-root/foo/../../other")));
+        assert!(!path_within(
+            root,
+            Path::new("/tmp/loglens-root/foo/../../other")
+        ));
         assert!(!path_within(root, Path::new("/tmp/loglens-root/../other")));
     }
 
@@ -314,7 +326,9 @@ mod tests {
         let names: Vec<_> = outcome.targets.iter().map(|t| t.name.as_str()).collect();
         assert!(names.iter().any(|n| n.ends_with("safe.log")));
         assert!(names.iter().all(|n| !n.contains("..")));
-        let temp = outcome.temp_dir.expect("zip extract should return temp dir");
+        let temp = outcome
+            .temp_dir
+            .expect("zip extract should return temp dir");
         assert!(temp.exists());
         // Nothing should have been written outside the temp root.
         assert!(!dir.join("escape.log").exists());
@@ -323,7 +337,41 @@ mod tests {
     }
 
     #[test]
-    fn collect_skips_symlinks_and_huge_files() {
+    fn looks_like_text_rejects_nul_empty_and_oversize() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-text-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+
+        let empty = dir.join("empty.log");
+        fs::write(&empty, b"").unwrap();
+        assert!(!looks_like_text(&empty));
+
+        let binary = dir.join("bin.log");
+        fs::write(&binary, b"hello\0world\n").unwrap();
+        assert!(!looks_like_text(&binary));
+
+        let ok = dir.join("ok.log");
+        fs::write(&ok, b"hello\n").unwrap();
+        assert!(looks_like_text(&ok));
+
+        // Sparse file: set length above the cap without writing 50MB of data.
+        let huge = dir.join("huge.log");
+        {
+            let f = File::create(&huge).unwrap();
+            f.set_len(MAX_LOG_BYTES + 1).unwrap();
+        }
+        assert!(!looks_like_text(&huge));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn collect_skips_symlinks_hidden_and_binaries() {
         let dir = std::env::temp_dir().join(format!(
             "loglens-test-collect-{}",
             SystemTime::now()
@@ -334,25 +382,79 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let log = dir.join("ok.log");
         fs::write(&log, b"hello\n").unwrap();
+        fs::write(dir.join(".hidden.log"), b"secret\n").unwrap();
+        fs::write(dir.join("blob.bin"), b"a\0b\n").unwrap();
 
-        let huge = dir.join("huge.log");
+        #[cfg(unix)]
         {
-            let mut f = File::create(&huge).unwrap();
-            // Don't actually write 50MB; just set sparse length via seek if possible.
-            // Fallback: write a marker and rely on metadata check with a stub —
-            // write slightly over the limit with a small write + truncate isn't portable,
-            // so create a file and skip if we can't make it large enough quickly.
-            let _ = f.write_all(b"x");
+            let link = dir.join("link.log");
+            std::os::unix::fs::symlink(&log, &link).unwrap();
         }
-        // Symlink to the good log (should be skipped by collect).
-        let link = dir.join("link.log");
-        let _ = std::os::unix::fs::symlink(&log, &link);
 
         let targets = collect_from_dir(&dir, &dir);
         let names: Vec<_> = targets.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"ok.log"));
-        assert!(!names.contains(&"link.log"));
+        assert_eq!(names, ["ok.log"]);
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn collect_respects_max_files_per_resolve() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-cap-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        for i in 0..(MAX_FILES_PER_RESOLVE + 25) {
+            fs::write(dir.join(format!("{i:04}.log")), b"x\n").unwrap();
+        }
+        let targets = collect_from_dir(&dir, &dir);
+        assert_eq!(targets.len(), MAX_FILES_PER_RESOLVE);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_missing_path_errors() {
+        match resolve(Path::new("/nonexistent/loglens-nope.log")) {
+            Ok(_) => panic!("missing path should error"),
+            Err(e) => assert!(format!("{e}").contains("no such file")),
+        }
+    }
+
+    #[test]
+    fn resolve_plain_file_and_directory() {
+        let file = resolve(Path::new("samples/sample.log")).unwrap();
+        assert_eq!(file.targets.len(), 1);
+        assert!(file.temp_dir.is_none());
+
+        let dir = resolve(Path::new("samples/bundle")).unwrap();
+        assert!(dir.targets.len() >= 3);
+        assert!(dir.temp_dir.is_none());
+        assert!(dir.targets.iter().all(|t| !t.name.contains("thumbnail")));
+    }
+
+    #[test]
+    fn extract_zip_rejects_oversize_archive_metadata() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-zipsize-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("huge.zip");
+        {
+            let f = File::create(&zip_path).unwrap();
+            f.set_len(MAX_ZIP_ARCHIVE_BYTES + 1).unwrap();
+        }
+        match extract_zip(&zip_path) {
+            Ok(_) => panic!("oversize archive should be rejected"),
+            Err(e) => assert!(e.to_string().contains("larger than")),
+        }
         fs::remove_dir_all(&dir).ok();
     }
 }

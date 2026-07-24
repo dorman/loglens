@@ -4,8 +4,8 @@ use anyhow::Result;
 use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Rect;
 use ratatui::DefaultTerminal;
+use ratatui::layout::Rect;
 
 use crate::app::{App, InputKind, Mode};
 use crate::ui;
@@ -28,10 +28,10 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 timeout = Duration::ZERO;
                 if let Event::Key(key) = event::read()?
                     && key.kind == KeyEventKind::Press
-                        && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
-                    {
-                        app.cancel_scan();
-                    }
+                    && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
+                {
+                    app.cancel_scan();
+                }
             }
             continue;
         }
@@ -279,5 +279,105 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('l') => app.toggle_legend(),
         KeyCode::Char('?') => app.toggle_help(),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn app_with_sample() -> App {
+        App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap()
+    }
+
+    #[test]
+    fn track_fraction_clamps_and_handles_short_track() {
+        let tall = Rect {
+            x: 0,
+            y: 10,
+            width: 1,
+            height: 11,
+        };
+        assert!((track_fraction(tall, 10) - 0.0).abs() < f64::EPSILON);
+        assert!((track_fraction(tall, 20) - 1.0).abs() < f64::EPSILON);
+        assert!((track_fraction(tall, 0) - 0.0).abs() < f64::EPSILON);
+        assert!((track_fraction(tall, 100) - 1.0).abs() < f64::EPSILON);
+
+        let short = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(track_fraction(short, 0), 0.0);
+    }
+
+    #[test]
+    fn viewer_slash_and_filter_require_open_file() {
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before searching")
+        );
+        handle_viewer(&mut empty, KeyCode::Char('f'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before filtering")
+        );
+    }
+
+    #[test]
+    fn viewer_begins_search_and_scan() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Input);
+        assert_eq!(app.input_kind, InputKind::Search);
+
+        app.mode = Mode::Viewer;
+        handle_viewer(&mut app, KeyCode::Char('S'), KeyModifiers::NONE);
+        assert!(app.scanning());
+    }
+
+    #[test]
+    fn input_chars_enter_and_esc() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Keyword);
+        handle_input(&mut app, KeyCode::Char('E'));
+        handle_input(&mut app, KeyCode::Char('R'));
+        assert_eq!(app.input_buffer, "ER");
+        handle_input(&mut app, KeyCode::Backspace);
+        assert_eq!(app.input_buffer, "E");
+        handle_input(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Viewer);
+        assert!(app.input_buffer.is_empty());
+
+        app.begin_input(InputKind::Keyword);
+        handle_input(&mut app, KeyCode::Char('X'));
+        handle_input(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Viewer);
+        assert_eq!(app.rules.len(), 1);
+        assert_eq!(app.rules[0].label, "X");
+    }
+
+    #[test]
+    fn esc_clears_search_before_quit() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("error".chars());
+        app.confirm_input();
+        assert!(app.search.is_some());
+        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.search.is_none());
+        assert!(!app.should_quit);
+        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.should_quit);
     }
 }

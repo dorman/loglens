@@ -28,13 +28,14 @@ This guide covers everything. For a 2-minute intro, see the
 
 ### Prerequisites
 
-loglens is built with Rust. Install the toolchain once via
-[rustup](https://rustup.rs):
+loglens is built with Rust **1.85+** (`edition = "2024"`). Install the
+toolchain once via [rustup](https://rustup.rs):
 
 ```sh
 # macOS / Linux
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
+rustc --version   # confirm >= 1.85
 ```
 
 On Windows, download and run the installer from <https://rustup.rs>
@@ -46,18 +47,18 @@ recommended).
 ```sh
 git clone https://github.com/dorman/loglens.git
 cd loglens
-cargo install --path .
+cargo install --path . --locked
 ```
 
 ### Install straight from GitHub (repo access required)
 
 ```sh
-cargo install --git https://github.com/dorman/loglens
+cargo install --git https://github.com/dorman/loglens --locked
 ```
 
-Either way the `loglens` binary lands in `~/.cargo/bin`, which rustup adds to
-your PATH. Open a new terminal (or `source "$HOME/.cargo/env"`) and verify:
-
+Either way the `loglens` binary lands in `$CARGO_HOME/bin` (usually
+`~/.cargo/bin`), which rustup adds to your PATH. Open a new terminal (or
+`source "$HOME/.cargo/env"`) and verify:
 ```sh
 loglens --version
 ```
@@ -67,7 +68,7 @@ loglens --version
 Re-run the same `cargo install` command with `--force`:
 
 ```sh
-cargo install --path . --force        # from a clone (after git pull)
+cargo install --path . --force --locked   # from a clone (after git pull)
 ```
 
 ### Uninstalling

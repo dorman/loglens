@@ -178,11 +178,95 @@ pub fn builtin() -> Vec<Signature> {
 mod tests {
     use super::*;
 
+    fn sigs() -> Vec<Signature> {
+        builtin()
+    }
+
+    fn titles_matching(line: &str) -> Vec<&'static str> {
+        sigs()
+            .iter()
+            .filter(|s| s.regex.is_match(line))
+            .map(|s| s.title)
+            .collect()
+    }
+
     #[test]
     fn all_builtin_signatures_compile() {
-        let sigs = builtin();
+        let sigs = sigs();
         assert!(!sigs.is_empty());
         // Every definition must compile — builtin() panics otherwise.
         assert!(sigs.iter().any(|s| s.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn severity_ordering_critical_gt_info() {
+        assert!(Severity::Critical > Severity::High);
+        assert!(Severity::High > Severity::Medium);
+        assert!(Severity::Medium > Severity::Low);
+        assert!(Severity::Low > Severity::Info);
+    }
+
+    #[test]
+    fn matches_encoded_powershell_sample_line() {
+        let line = "WARN  Suspicious process detected: powershell.exe -enc <base64>";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("PowerShell")),
+            "expected encoded PowerShell signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_certificate_validation_failure() {
+        let line = "ERROR Certificate validation failed for update.example.com";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("Certificate")),
+            "expected cert failure signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_clock_rollback_phrase() {
+        let line = "ERROR License validation failed: rollback detected on system clock";
+        let titles = titles_matching(line);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.contains("Clock") || t.contains("rollback")),
+            "expected clock rollback signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_connection_refused() {
+        let line = "connection refused while contacting update.example.com:443";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("Connection")),
+            "expected connection signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_installer_rollback() {
+        let line = "Error 1603: Fatal error during installation — rolling back";
+        let titles = titles_matching(line);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.contains("Installer") || t.contains("rollback")),
+            "expected installer rollback signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn clean_info_line_is_not_an_error_finding() {
+        let line = "2026-07-22 10:00:01 INFO  Starting AV agent service v14.2.1";
+        let titles = titles_matching(line);
+        assert!(
+            titles.is_empty(),
+            "clean INFO startup line should not match: {titles:?}"
+        );
     }
 }

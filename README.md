@@ -36,28 +36,33 @@ logs) and need to spot trouble fast.
 
 ### 1. Install Rust (once)
 
+loglens requires **Rust 1.85+** (`edition = "2024"`). Install via
+[rustup](https://rustup.rs):
+
 macOS / Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
+rustc --version   # confirm >= 1.85
 ```
 
-Windows: install from <https://rustup.rs>.
+Windows: install from <https://rustup.rs> (Windows Terminal recommended).
 
 ### 2. Install loglens
 
 ```sh
 git clone https://github.com/dorman/loglens.git
 cd loglens
-cargo install --path .
+cargo install --path . --locked
 ```
 
 This builds a release binary and puts `loglens` on your PATH
-(`~/.cargo/bin`). Teammates with repo access can skip the clone:
+(`$CARGO_HOME/bin`, usually `~/.cargo/bin`). Teammates with repo access can
+skip the clone:
 
 ```sh
-cargo install --git https://github.com/dorman/loglens
+cargo install --git https://github.com/dorman/loglens --locked
 ```
 
 ### 3. Run it
@@ -95,7 +100,9 @@ lives in **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
 ```sh
 cargo build            # debug build
-cargo clippy           # lints (kept at zero warnings)
+cargo test             # unit tests (run from the crate root)
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 cargo run -- samples/bundle
 ```
 

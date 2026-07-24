@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ratatui::style::Color;
 use regex::{Regex, RegexBuilder};
 
@@ -104,6 +104,7 @@ pub fn build_rules(cli: &Cli) -> Result<Vec<Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn rejects_overlong_regex() {
@@ -123,5 +124,65 @@ mod tests {
         let rule = compile_rule("ERROR", false, true, 0).unwrap();
         assert!(rule.regex.is_match("an ERROR occurred"));
         assert!(!rule.is_regex);
+    }
+
+    #[test]
+    fn keyword_is_literal_not_regex_metachar() {
+        let rule = compile_rule("file.txt", false, false, 0).unwrap();
+        assert!(rule.regex.is_match("see file.txt here"));
+        assert!(
+            !rule.regex.is_match("see fileXtxt here"),
+            "keyword metacharacters must be escaped"
+        );
+    }
+
+    #[test]
+    fn ignore_case_applies_to_keyword_and_regex() {
+        let kw = compile_rule("error", false, true, 0).unwrap();
+        assert!(kw.regex.is_match("ERROR"));
+        let re = compile_rule(r"time\s*out", true, true, 1).unwrap();
+        assert!(re.regex.is_match("TIME OUT"));
+    }
+
+    #[test]
+    fn cli_keywords_comma_split_and_trim_empties() {
+        let cli = Cli::try_parse_from([
+            "loglens",
+            "-k",
+            "ERROR",
+            "-k",
+            "timeout,rollback",
+            "-k",
+            " , ",
+            "-i",
+        ])
+        .unwrap();
+        let rules = build_rules(&cli).unwrap();
+        let labels: Vec<_> = rules.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["ERROR", "timeout", "rollback"]);
+        assert!(cli.ignore_case);
+    }
+
+    #[test]
+    fn cli_invalid_regex_fails_build_rules() {
+        let cli = Cli::try_parse_from(["loglens", "-r", "("]).unwrap();
+        match build_rules(&cli) {
+            Ok(_) => panic!("invalid regex should fail"),
+            Err(e) => {
+                let err = e.to_string();
+                assert!(err.contains("invalid regex") || err.contains("failed to compile"));
+            }
+        }
+    }
+
+    #[test]
+    fn build_rules_respects_max_rules() {
+        let mut args = vec!["loglens".to_string()];
+        for i in 0..(MAX_RULES + 1) {
+            args.push("-k".into());
+            args.push(format!("kw{i}"));
+        }
+        let cli = Cli::try_parse_from(&args).unwrap();
+        assert!(build_rules(&cli).is_err());
     }
 }

@@ -93,12 +93,13 @@ impl Browser {
     /// Enter the selected directory. Returns true if a directory was entered.
     pub fn enter_dir(&mut self) -> bool {
         if let Some(entry) = self.selected_entry()
-            && entry.is_dir {
-                self.cwd = entry.path.clone();
-                self.selected = 0;
-                self.refresh();
-                return true;
-            }
+            && entry.is_dir
+        {
+            self.cwd = entry.path.clone();
+            self.selected = 0;
+            self.refresh();
+            return true;
+        }
         false
     }
 
@@ -138,5 +139,114 @@ impl Browser {
             Some(e) if !e.is_dir => vec![e.path.clone()],
             _ => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_dir(prefix: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("loglens-browser-{prefix}-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn refresh_sorts_dirs_first_and_hides_dotfiles() {
+        let dir = tmp_dir("sort");
+        fs::create_dir(dir.join("subdir")).unwrap();
+        fs::write(dir.join("b.log"), b"b\n").unwrap();
+        fs::write(dir.join("a.log"), b"a\n").unwrap();
+        fs::write(dir.join(".secret"), b"x\n").unwrap();
+
+        let browser = Browser::new(dir.clone());
+        let names: Vec<_> = browser
+            .entries
+            .iter()
+            .filter(|e| e.name != "..")
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(names, ["subdir", "a.log", "b.log"]);
+        assert!(!browser.show_hidden);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn toggle_mark_ignores_dirs_and_files_to_open_prefers_marks() {
+        let dir = tmp_dir("mark");
+        fs::create_dir(dir.join("subdir")).unwrap();
+        fs::write(dir.join("one.log"), b"1\n").unwrap();
+        fs::write(dir.join("two.log"), b"2\n").unwrap();
+
+        let mut browser = Browser::new(dir.clone());
+        // Select subdir (dirs first after "..") and try to mark it.
+        let dir_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.name == "subdir")
+            .unwrap();
+        browser.selected = dir_idx;
+        browser.toggle_mark();
+        assert!(browser.marked.is_empty());
+
+        let one_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.name == "one.log")
+            .unwrap();
+        browser.selected = one_idx;
+        browser.toggle_mark();
+        let two_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.name == "two.log")
+            .unwrap();
+        browser.selected = two_idx;
+        browser.toggle_mark();
+
+        let opened = browser.files_to_open();
+        assert_eq!(opened.len(), 2);
+        assert!(opened.iter().all(|p| p.extension().unwrap() == "log"));
+
+        // Clear marks: falls back to selected file.
+        browser.marked.clear();
+        browser.selected = one_idx;
+        assert_eq!(browser.files_to_open(), vec![dir.join("one.log")]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn move_selection_clamps_and_enter_dir_works() {
+        let dir = tmp_dir("nav");
+        let nested = dir.join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("inside.log"), b"x\n").unwrap();
+
+        let mut browser = Browser::new(dir.clone());
+        browser.move_selection(-100);
+        assert_eq!(browser.selected, 0);
+        browser.move_selection(1000);
+        assert_eq!(browser.selected, browser.entries.len() - 1);
+
+        let nested_idx = browser
+            .entries
+            .iter()
+            .position(|e| e.name == "nested")
+            .unwrap();
+        browser.selected = nested_idx;
+        assert!(browser.enter_dir());
+        assert_eq!(browser.cwd, nested);
+        assert!(browser.entries.iter().any(|e| e.name == "inside.log"));
+
+        fs::remove_dir_all(&dir).ok();
     }
 }
