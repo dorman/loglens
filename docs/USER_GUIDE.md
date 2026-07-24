@@ -26,40 +26,59 @@ This guide covers everything. For a 2-minute intro, see the
 
 ## Installation
 
-### Prerequisites
+loglens is in **pre-release**. Install from source today. Prebuilt GitHub
+Release binaries and a crates.io publish are planned for a later public
+release — do not treat those paths as live until a `v*` tag exists and the
+crate has been published.
 
-loglens is built with Rust. Install the toolchain once via
-[rustup](https://rustup.rs):
+### From a clone (current)
 
-```sh
-# macOS / Linux
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
-
-On Windows, download and run the installer from <https://rustup.rs>
-(loglens runs in any terminal that supports ANSI colors; Windows Terminal
-recommended).
-
-### Install from a clone
+Requires Rust **1.85+** (`edition = "2024"`):
 
 ```sh
+# https://rustup.rs
 git clone https://github.com/dorman/loglens.git
 cd loglens
-cargo install --path .
+cargo install --path . --locked
 ```
 
-### Install straight from GitHub (repo access required)
+### From GitHub (repo access required)
 
 ```sh
-cargo install --git https://github.com/dorman/loglens
+cargo install --git https://github.com/dorman/loglens --locked
 ```
 
-Either way the `loglens` binary lands in `~/.cargo/bin`, which rustup adds to
-your PATH. Open a new terminal (or `source "$HOME/.cargo/env"`) and verify:
+`cargo install` places the binary in `$CARGO_HOME/bin` (usually
+`~/.cargo/bin`), which rustup adds to your PATH. Open a new terminal (or
+`source "$HOME/.cargo/env"`) and verify:
 
 ```sh
 loglens --version
+```
+
+### Planned: prebuilt binary & crates.io
+
+When the public release lands:
+
+- Download OS/CPU archives from
+  [GitHub Releases](https://github.com/dorman/loglens/releases), or run
+  `scripts/install.sh` on Linux/macOS.
+- Or: `cargo install loglens --locked` from crates.io.
+
+### Publishing a release (maintainers — after testing)
+
+Only after merge to `master` and thorough testing (target: later public
+release). Then tag for GitHub Release binaries; publish to crates.io
+separately when ready:
+
+```sh
+git checkout master
+git pull
+git tag v0.21.0
+git push origin v0.21.0
+# GitHub Actions attaches Linux/macOS/Windows archives to the release.
+# crates.io (optional, separate step — needs credentials):
+#   cargo publish
 ```
 
 ### Updating
@@ -67,7 +86,7 @@ loglens --version
 Re-run the same `cargo install` command with `--force`:
 
 ```sh
-cargo install --path . --force        # from a clone (after git pull)
+cargo install --path . --force --locked   # from a clone (after git pull)
 ```
 
 ### Uninstalling
@@ -157,7 +176,9 @@ PowerShell commands, process injection, commonly-abused system binaries
 (LOLBins), clock/time rollback, certificate-validation failures, corrupt
 signature databases, crashes and fatal errors, resource exhaustion
 (OOM / disk full), connection refusals, update failures, installer rollbacks,
-access-denied errors, and generic ERROR/WARN lines as low-priority context.
+and access-denied errors. Findings are **Medium severity and above** so a
+noisy ERROR/WARN flood cannot bury real triage signals — use keyword
+highlights (`a` / `-k ERROR,WARN`) when you want every error line.
 
 In the findings panel:
 
@@ -173,7 +194,8 @@ After a scan, flagged lines keep a colored **severity dot** in the gutter, so
 trouble stays visible while you read normally.
 
 Long scans (large bundles) show a live progress bar with a running findings
-count — press `Esc` to cancel.
+count — press `Esc` to cancel. Cancelling clears any partial severity dots so
+the file does not look half-scanned.
 
 ---
 

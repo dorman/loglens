@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -7,7 +8,6 @@ use ratatui::widgets::{
     Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
     Wrap,
 };
-use ratatui::Frame;
 use regex::Regex;
 
 use crate::app::{App, InputKind, LogFile, Mode};
@@ -37,7 +37,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
     let frac = app.scan_fraction().unwrap_or(0.0);
-    let (processed, total, found, file_name) = app.scan_detail().unwrap_or((0, 0, 0, String::new()));
+    let (processed, total, found, file_name) =
+        app.scan_detail().unwrap_or((0, 0, 0, String::new()));
 
     let rect = centered_rect_lines(area, 56, 6);
     let block = theme::panel(" Scanning for known-bad signatures… ", true);
@@ -47,7 +48,11 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
     let pct = (frac * 100.0).round() as u16;
@@ -158,9 +163,7 @@ fn draw_viewer(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // Record the scrollbar track so the mouse handler can hit-test it.
     app.regions.scrollbar = Rect::default();
-    if app.has_files()
-        && log_area.height > 2
-        && app.file().view.len() > app.viewport_height.max(1)
+    if app.has_files() && log_area.height > 2 && app.file().view.len() > app.viewport_height.max(1)
     {
         app.regions.scrollbar = Rect {
             x: log_area.x + log_area.width.saturating_sub(1),
@@ -226,7 +229,9 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     let key = |k: &'static str| {
         Span::styled(
             k,
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
         )
     };
 
@@ -270,11 +275,24 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     );
     lines.push(Line::from(""));
     lines.push(
-        Line::from(vec![key("o"), Span::raw(" open logs    "), key("a"), Span::raw(" add highlight    "), key("S"), Span::raw(" scan")])
-            .centered(),
+        Line::from(vec![
+            key("o"),
+            Span::raw(" open logs    "),
+            key("a"),
+            Span::raw(" add highlight    "),
+            key("S"),
+            Span::raw(" scan"),
+        ])
+        .centered(),
     );
     lines.push(
-        Line::from(vec![key("?"), Span::raw(" help    "), key("q"), Span::raw(" quit")]).centered(),
+        Line::from(vec![
+            key("?"),
+            Span::raw(" help    "),
+            key("q"),
+            Span::raw(" quit"),
+        ])
+        .centered(),
     );
 
     // Vertically center the block within the pane.
@@ -385,14 +403,26 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
             Line::from("  No lines match the current filter."),
             Line::from(vec![
                 Span::raw("  Press  "),
-                Span::styled("f", Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "f",
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  to exit filter, or  "),
-                Span::styled("/", Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "/",
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  to search."),
             ]),
         ];
         frame.render_widget(
-            Paragraph::new(msg).style(Style::default().fg(theme::TEXT_DIM)).block(block),
+            Paragraph::new(msg)
+                .style(Style::default().fg(theme::TEXT_DIM))
+                .block(block),
             area,
         );
         return;
@@ -410,27 +440,35 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         let mut spans = Vec::new();
         // Severity dot from the last scan (blank until scanned).
         match file.scan_severity.get(line_idx).copied().flatten() {
-            Some(sev) => spans.push(Span::styled(
-                "\u{25CF} ",
-                Style::default().fg(sev.color()),
-            )),
+            Some(sev) => spans.push(Span::styled("\u{25CF} ", Style::default().fg(sev.color()))),
             None => spans.push(Span::raw("  ")),
         }
         spans.push(Span::styled(
             format!("{:>width$} \u{2502} ", line_idx + 1, width = gutter_width),
             Style::default().fg(theme::GUTTER),
         ));
-        spans.extend(render_line_spans(text, &file.matches[line_idx], &app.rules, search));
+        spans.extend(render_line_spans(
+            text,
+            &file.matches[line_idx],
+            &app.rules,
+            search,
+        ));
 
         let mut line = Line::from(spans);
         if is_cursor {
-            line = line.style(Style::default().bg(theme::CURSOR_BG).add_modifier(Modifier::BOLD));
+            line = line.style(
+                Style::default()
+                    .bg(theme::CURSOR_BG)
+                    .add_modifier(Modifier::BOLD),
+            );
         }
         lines.push(line);
     }
 
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().fg(theme::TEXT)).block(block),
+        Paragraph::new(lines)
+            .style(Style::default().fg(theme::TEXT))
+            .block(block),
         area,
     );
 
@@ -481,7 +519,9 @@ fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
             let marker = if active { "\u{25B8} " } else { "  " };
             let kind = if rule.is_regex { "re" } else { "kw" };
             let label_style = if active {
-                Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme::TEXT)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme::TEXT)
             };
@@ -534,7 +574,11 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     app.regions.browser = popup;
 
     let b = &app.browser;
-    let title = format!(" Open logs — {}  ({} marked) ", b.cwd.display(), b.marked.len());
+    let title = format!(
+        " Open logs — {}  ({} marked) ",
+        b.cwd.display(),
+        b.marked.len()
+    );
     let block = theme::panel(&title, true);
     let inner = block.inner(popup);
 
@@ -565,7 +609,11 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
         let marked = b.marked.contains(&entry.path);
 
         let mark = if marked { "\u{2713} " } else { "  " };
-        let icon = if entry.is_dir { "\u{1F4C1} " } else { "\u{1F4C4} " };
+        let icon = if entry.is_dir {
+            "\u{1F4C1} "
+        } else {
+            "\u{1F4C4} "
+        };
         let name = if entry.is_dir {
             format!("{}/", entry.name)
         } else {
@@ -621,7 +669,9 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn key() -> Style {
-    Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(theme::ACCENT)
+        .add_modifier(Modifier::BOLD)
 }
 fn dim() -> Style {
     Style::default().fg(theme::TEXT_DIM)
@@ -692,7 +742,9 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
         let title_style = if is_sel {
-            Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme::TEXT)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme::TEXT)
         };
@@ -726,14 +778,28 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!(" {} ", sig.severity.label()),
-                    Style::default().fg(theme::MATCH_FG).bg(sig.severity.color()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme::MATCH_FG)
+                        .bg(sig.severity.color())
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
                 Span::styled(sig.category, Style::default().fg(theme::ACCENT)),
-                Span::styled(format!("  {}", sig.title), Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("  {}", sig.title),
+                    Style::default()
+                        .fg(theme::TEXT)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
-            Line::from(Span::styled(sig.explain.to_string(), Style::default().fg(theme::TEXT_DIM))),
-            Line::from(Span::styled(format!("→ {excerpt}"), Style::default().fg(theme::TEXT))),
+            Line::from(Span::styled(
+                sig.explain.to_string(),
+                Style::default().fg(theme::TEXT_DIM),
+            )),
+            Line::from(Span::styled(
+                format!("→ {excerpt}"),
+                Style::default().fg(theme::TEXT),
+            )),
             Line::from(vec![
                 Span::styled("j/k", key()),
                 Span::styled(" move   ", dim()),
@@ -808,11 +874,20 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let popup = centered_rect(66, 92, area);
-    let head = |s: &'static str| Line::from(Span::styled(s, Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)));
+    let head = |s: &'static str| {
+        Line::from(Span::styled(
+            s,
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ))
+    };
     let text = vec![
         Line::from(Span::styled(
             "loglens — keybindings",
-            Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::TEXT)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         head("Viewer"),
@@ -844,12 +919,86 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  O               open whole folder or .zip recursively"),
         Line::from("  h / .           parent dir / toggle hidden"),
         Line::from(""),
-        Line::from(Span::styled("  ? close help    q quit", Style::default().fg(theme::TEXT_DIM))),
+        Line::from(Span::styled(
+            "  ? close help    q quit",
+            Style::default().fg(theme::TEXT_DIM),
+        )),
     ];
     let block = theme::panel(" Help (? to close) ", true).title_alignment(Alignment::Center);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(theme::TEXT)).block(block),
+        Paragraph::new(text)
+            .style(Style::default().fg(theme::TEXT))
+            .block(block),
         popup,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::MatchSpan;
+    use crate::rules;
+
+    #[test]
+    fn severity_bar_handles_zero_width_and_sparse_counts() {
+        let empty = severity_bar([0; 5], 0);
+        assert!(empty.spans.is_empty() || empty.width() == 0);
+
+        let counts = [1, 0, 2, 0, 1]; // info, low, med, high, crit
+        let bar = severity_bar(counts, 10);
+        assert!(bar.width() <= 10);
+        assert!(!bar.spans.is_empty());
+    }
+
+    #[test]
+    fn centered_rect_lines_does_not_overflow_wide_terminals() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 2000,
+            height: 60,
+        };
+        let rect = centered_rect_lines(area, 60, 3);
+        assert_eq!(rect.height, 3);
+        assert!(rect.width <= area.width);
+        assert!(rect.x + rect.width <= area.x + area.width);
+    }
+
+    #[test]
+    fn render_line_spans_search_overrides_rule_color() {
+        let rule = rules::compile_rule("ERROR", false, false, 0).unwrap();
+        let spans = [MatchSpan {
+            start: 0,
+            end: 5,
+            rule: 0,
+        }];
+        let search = Regex::new("ERR").unwrap();
+        let out = render_line_spans("ERROR happened", &spans, &[rule], Some(&search));
+        assert!(out.len() >= 2);
+        // The search-styled prefix should use SEARCH_BG.
+        assert_eq!(out[0].style.bg, Some(theme::SEARCH_BG));
+    }
+
+    #[test]
+    fn render_line_spans_ignores_non_char_boundary_cuts() {
+        let rule = rules::compile_rule("字", false, false, 0).unwrap();
+        // Corrupt span pointing mid-codepoint must not panic.
+        let spans = [MatchSpan {
+            start: 1,
+            end: 2,
+            rule: 0,
+        }];
+        let out = render_line_spans("字abc", &spans, &[rule], None);
+        assert!(!out.is_empty());
+        let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "字abc");
+    }
+
+    #[test]
+    fn render_line_spans_empty_line() {
+        let out = render_line_spans("", &[], &[], None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].content.as_ref(), "");
+    }
 }

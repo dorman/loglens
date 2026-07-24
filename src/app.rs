@@ -9,13 +9,16 @@ use regex::Regex;
 
 use crate::browser::Browser;
 use crate::ingest::{self, MAX_LOG_BYTES};
-use crate::rules::{self, Rule, MAX_RULES};
+use crate::rules::{self, MAX_RULES, Rule};
 use crate::signatures::{self, Severity, Signature};
 
 /// Hard caps that keep hostile or pathological inputs from exhausting memory.
 const MAX_MATCHES_PER_LINE: usize = 256;
 const MAX_MATCHES_PER_FILE: usize = 100_000;
 const MAX_FINDINGS: usize = 10_000;
+/// Findings below this severity are recorded on the gutter only (if matched)
+/// and never enter the triage panel — keeps Low/Info noise from burning the cap.
+const MIN_FINDING_SEVERITY: Severity = Severity::Medium;
 const MAX_OPEN_FILES: usize = 500;
 /// A 50 MB file of 1-byte lines would otherwise allocate tens of millions of
 /// `String`s; cap line count so RAM stays bounded inside the byte budget.
@@ -102,8 +105,8 @@ impl LogFile {
         // Cap the read so a direct open (CLI/browser) cannot bypass the folder
         // collection size limit and OOM the process. `take(limit+1)` also closes
         // the race where a file grows between a metadata check and the read.
-        let file = File::open(path)
-            .with_context(|| format!("failed to read '{}'", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("failed to read '{}'", path.display()))?;
         let mut bytes = Vec::new();
         file.take(MAX_LOG_BYTES + 1)
             .read_to_end(&mut bytes)
@@ -255,14 +258,14 @@ pub fn compile_search(text: &str) -> Result<Regex> {
     rules::compile_regex(&format!("(?i){}", regex::escape(text)))
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
     Viewer,
     Browser,
     Input,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InputKind {
     Keyword,
     Regex,
@@ -529,17 +532,29 @@ impl App {
     pub fn toggle_ignore_case(&mut self) {
         self.ignore_case = !self.ignore_case;
         let mut rebuilt = Vec::with_capacity(self.rules.len());
-        for (i, r) in self.rules.iter().enumerate() {
-            if let Ok(rule) = rules::compile_rule(&r.label, r.is_regex, self.ignore_case, i) {
-                rebuilt.push(rule);
+        let mut dropped = 0usize;
+        for r in &self.rules {
+            match rules::compile_rule(&r.label, r.is_regex, self.ignore_case, rebuilt.len()) {
+                Ok(rule) => rebuilt.push(rule),
+                Err(_) => dropped += 1,
             }
+        }
+        if dropped > 0 {
+            // Indices into the old rule list are no longer valid.
+            self.active_rule = None;
+        } else if let Some(ar) = self.active_rule
+            && ar >= rebuilt.len()
+        {
+            self.active_rule = None;
         }
         self.rules = rebuilt;
         self.rescan_all();
-        self.status = Some(format!(
-            "case-insensitive: {}",
-            if self.ignore_case { "on" } else { "off" }
-        ));
+        let case = if self.ignore_case { "on" } else { "off" };
+        self.status = Some(if dropped > 0 {
+            format!("case-insensitive: {case} ({dropped} rule(s) dropped — failed to recompile)")
+        } else {
+            format!("case-insensitive: {case}")
+        });
     }
 
     // --- Search & filter -------------------------------------------------
@@ -819,7 +834,10 @@ impl App {
         let start = self.file().view_pos;
         for step in 1..=n {
             let pos = (start + step) % n;
-            if self.file().matches[view[pos]].iter().any(|m| m.rule == rule) {
+            if self.file().matches[view[pos]]
+                .iter()
+                .any(|m| m.rule == rule)
+            {
                 self.file_mut().view_pos = pos;
                 self.ensure_cursor_visible();
                 self.clamp_scroll();
@@ -888,7 +906,7 @@ impl App {
                     // Still record severity on the line even after the findings
                     // list is capped, so gutter markers remain useful.
                     best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
-                    if st.findings.len() < MAX_FINDINGS {
+                    if sig.severity >= MIN_FINDING_SEVERITY && st.findings.len() < MAX_FINDINGS {
                         st.findings.push(Finding {
                             file: st.file,
                             line: st.line,
@@ -939,6 +957,14 @@ impl App {
 
     pub fn cancel_scan(&mut self) {
         if self.scan.take().is_some() {
+            // Drop partial gutter markers so a cancelled scan doesn't leave the
+            // file looking half-triaged.
+            for f in &mut self.files {
+                f.scan_severity = vec![None; f.lines.len()];
+            }
+            self.findings.clear();
+            self.findings_sel = 0;
+            self.show_findings = false;
             self.status = Some("scan cancelled".into());
         }
     }
@@ -1047,15 +1073,20 @@ impl App {
         if self.findings.is_empty() {
             self.show_findings = false;
         }
-        self.findings_sel = self
-            .findings_sel
-            .min(self.findings.len().saturating_sub(1));
+        self.findings_sel = self.findings_sel.min(self.findings.len().saturating_sub(1));
 
         if self.current >= self.files.len() {
             self.current = self.files.len().saturating_sub(1);
         }
         if self.files.is_empty() {
-            self.mode = Mode::Browser;
+            // Match cold-start: land on the branded welcome viewer (press `o`
+            // for the browser), not a surprise file-browser popup.
+            self.mode = Mode::Viewer;
+            self.filter_on = false;
+            self.search = None;
+            self.active_rule = None;
+            self.show_findings = false;
+            self.status = Some("all files closed — press o to open".into());
         }
     }
 
@@ -1131,12 +1162,320 @@ mod tests {
     #[test]
     fn loads_sample_log() {
         let path = Path::new("samples/sample.log");
-        if !path.exists() {
-            return;
-        }
+        assert!(
+            path.exists(),
+            "samples/sample.log must exist (run tests from the crate root)"
+        );
         let file = LogFile::load(path, "sample.log".into(), &[]).unwrap();
         assert!(!file.lines.is_empty());
         assert_eq!(file.matches.len(), file.lines.len());
+    }
+
+    fn app_with_paths(paths: &[&str]) -> App {
+        let inputs: Vec<String> = paths.iter().map(|p| (*p).to_string()).collect();
+        App::new(&inputs, Vec::new(), false).expect("app should construct")
+    }
+
+    fn run_scan_to_completion(app: &mut App) {
+        app.begin_scan();
+        // Bound iterations so a stuck scan fails the test instead of hanging CI.
+        for _ in 0..10_000 {
+            if app.scan_step(10_000) {
+                return;
+            }
+        }
+        panic!("scan did not finish");
+    }
+
+    #[test]
+    fn open_bundle_skips_binaries_and_uses_relative_names() {
+        let app = app_with_paths(&["samples/bundle"]);
+        assert!(app.has_files());
+        let names: Vec<_> = app.files.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("agent.log")));
+        assert!(names.iter().any(|n| n.contains("install.log")));
+        assert!(names.iter().any(|n| n.contains("network.log")));
+        assert!(
+            names.iter().all(|n| !n.contains("thumbnail.bin")),
+            "binary files must be skipped: {names:?}"
+        );
+        // Relative tab names distinguish files from nested folders.
+        assert!(names.iter().any(|n| n.contains('/') || n.contains('\\')));
+    }
+
+    #[test]
+    fn open_zip_loads_logs_and_registers_temp_dir() {
+        let app = app_with_paths(&["samples/bundle.zip"]);
+        assert!(app.has_files());
+        assert!(
+            !app.temp_dirs.is_empty(),
+            "zip extract should retain a temp dir for cleanup"
+        );
+        assert!(app.temp_dirs.iter().all(|d| d.exists()));
+        let names: Vec<_> = app.files.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.contains("agent.log")));
+        assert!(names.iter().all(|n| !n.contains("thumbnail.bin")));
+    }
+
+    #[test]
+    fn resolve_missing_path_sets_status_without_panic() {
+        // App::new clears status after the initial open, so exercise open_resolved
+        // directly to assert user-visible feedback.
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.open_resolved(&[PathBuf::from("/nonexistent/loglens-missing-file.log")]);
+        assert!(!app.has_files());
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("failed") || status.contains("no log"),
+            "unexpected status: {status}"
+        );
+    }
+
+    #[test]
+    fn scan_ranks_findings_by_severity_then_location() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+        assert!(app.show_findings);
+        for w in app.findings.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let sa = app.signatures[a.sig].severity;
+            let sb = app.signatures[b.sig].severity;
+            assert!(sa >= sb, "findings must be sorted high→low severity");
+            if sa == sb {
+                assert!(
+                    (a.file, a.line) <= (b.file, b.line),
+                    "equal severity must keep file/line order"
+                );
+            }
+        }
+        // Sample contains known High/Critical-class signals.
+        let counts = app.severity_counts();
+        assert!(
+            counts[Severity::High as usize] + counts[Severity::Critical as usize] > 0,
+            "sample.log should yield high/critical findings"
+        );
+    }
+
+    #[test]
+    fn scan_without_files_sets_status() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.begin_scan();
+        assert!(!app.scanning());
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before scanning")
+        );
+    }
+
+    #[test]
+    fn cancel_scan_clears_running_state() {
+        let mut app = app_with_paths(&["samples/big.log"]);
+        app.begin_scan();
+        assert!(app.scanning());
+        // Advance a little so gutter markers may be partial, then cancel.
+        app.scan_step(5);
+        assert!(
+            app.files
+                .iter()
+                .any(|f| f.scan_severity.iter().any(|s| s.is_some())),
+            "expected partial gutter markers before cancel"
+        );
+        app.cancel_scan();
+        assert!(!app.scanning());
+        assert_eq!(app.status.as_deref(), Some("scan cancelled"));
+        assert!(
+            app.files
+                .iter()
+                .all(|f| f.scan_severity.iter().all(|s| s.is_none())),
+            "cancel must clear partial gutter markers"
+        );
+        assert!(app.findings.is_empty());
+        assert!(!app.show_findings);
+    }
+
+    #[test]
+    fn scan_findings_exclude_low_info_noise() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+        assert!(
+            app.findings
+                .iter()
+                .all(|f| app.signatures[f.sig].severity >= Severity::Medium),
+            "findings panel must not include Low/Info catch-alls"
+        );
+        let counts = app.severity_counts();
+        assert_eq!(counts[Severity::Info as usize], 0);
+        assert_eq!(counts[Severity::Low as usize], 0);
+    }
+
+    #[test]
+    fn findings_jump_disables_filter_when_line_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        // Filter to a rare term so most scan hits are hidden.
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("Quarantine".chars());
+        app.confirm_input();
+        app.filter_on = true;
+        app.rebuild_views();
+        assert_eq!(app.file().view.len(), 1);
+
+        run_scan_to_completion(&mut app);
+        // Pick a finding that is not the Quarantine line.
+        let target = app
+            .findings
+            .iter()
+            .copied()
+            .find(|f| !app.files[f.file].lines[f.line].contains("Quarantine"))
+            .expect("need a non-quarantine finding");
+        app.findings_sel = app
+            .findings
+            .iter()
+            .position(|f| f.file == target.file && f.line == target.line)
+            .unwrap();
+        app.findings_jump();
+        assert!(!app.filter_on, "jump must defeat a hiding filter");
+        assert_eq!(app.file().view[app.file().view_pos], target.line);
+        assert!(!app.show_findings);
+    }
+
+    #[test]
+    fn close_current_file_remaps_finding_file_indices() {
+        let mut app = app_with_paths(&["samples/sample.log", "samples/network.log"]);
+        assert_eq!(app.files.len(), 2);
+        run_scan_to_completion(&mut app);
+        assert!(app.findings.iter().any(|f| f.file == 1));
+        app.current = 0;
+        app.close_current_file();
+        assert_eq!(app.files.len(), 1);
+        assert!(
+            app.findings.iter().all(|f| f.file == 0),
+            "remaining findings must point at the surviving file"
+        );
+        assert!(app.files[0].name.contains("network.log"));
+    }
+
+    #[test]
+    fn close_last_file_returns_to_welcome_viewer() {
+        let mut app = app_with_paths(&["samples/network.log"]);
+        app.close_current_file();
+        assert!(!app.has_files());
+        assert_eq!(app.mode, Mode::Viewer);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("press o to open")
+        );
+    }
+
+    #[test]
+    fn keyword_and_search_filter_navigation() {
+        let rule = rules::compile_rule("ERROR", false, true, 0).unwrap();
+        let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
+        assert!(app.file().rule_counts[0] > 0);
+
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        let hit_lines = app
+            .file()
+            .lines
+            .iter()
+            .filter(|l| app.search.as_ref().unwrap().regex.is_match(l))
+            .count();
+        assert!(
+            hit_lines >= 3,
+            "expected several ERROR lines, got {hit_lines}"
+        );
+        // Occurrences can exceed line count when a line matches more than once
+        // (e.g. "ERROR ... error").
+        assert!(app.search_hits() >= hit_lines);
+
+        app.toggle_filter();
+        assert!(app.filter_on);
+        assert_eq!(app.file().view.len(), hit_lines);
+        assert!(
+            app.file()
+                .view
+                .iter()
+                .all(|&i| app.file().lines[i].to_lowercase().contains("error"))
+        );
+
+        let start = app.file().view_pos;
+        app.next_match();
+        assert!(app.file().view_pos > start || hit_lines <= 1);
+        app.prev_match();
+        assert_eq!(app.file().view_pos, start);
+    }
+
+    #[test]
+    fn confirm_input_rejects_invalid_regex_and_respects_rule_cap() {
+        let mut app = app_with_paths(&["samples/network.log"]);
+        app.begin_input(InputKind::Regex);
+        app.push_input_chars("(".chars());
+        app.confirm_input();
+        assert!(app.rules.is_empty());
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("invalid regex")
+                || app.status.as_deref().unwrap_or("").contains("failed")
+        );
+
+        for i in 0..MAX_RULES {
+            let rule = rules::compile_rule(&format!("k{i}"), false, false, i).unwrap();
+            app.rules.push(rule);
+        }
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("overflow".chars());
+        app.confirm_input();
+        assert_eq!(app.rules.len(), MAX_RULES);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("highlight limit")
+        );
+    }
+
+    #[test]
+    fn remove_last_rule_clears_active_and_rescans() {
+        let rule = rules::compile_rule("WARN", false, true, 0).unwrap();
+        let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
+        app.active_rule = Some(0);
+        assert!(app.file().total_matches() > 0);
+        app.remove_last_rule();
+        assert!(app.rules.is_empty());
+        assert_eq!(app.active_rule, None);
+        assert_eq!(app.file().total_matches(), 0);
+    }
+
+    #[test]
+    fn lossy_utf8_load_replaces_invalid_bytes() {
+        let path = tmp_name("latin1");
+        // "ERROR café" with Latin-1 é (0xE9) — invalid UTF-8.
+        fs::write(&path, b"ERROR caf\xe9\n").unwrap();
+        let file = LogFile::load(&path, "latin1.log".into(), &[]).unwrap();
+        assert_eq!(file.lines.len(), 1);
+        assert!(file.lines[0].contains("ERROR"));
+        assert!(file.lines[0].contains('�') || file.lines[0].contains('é'));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn highlight_only_filter_uses_match_lines() {
+        let rule = rules::compile_rule("WARN", false, true, 0).unwrap();
+        let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
+        let expected = app.file().match_lines.clone();
+        app.filter_on = true;
+        app.rebuild_views();
+        assert_eq!(app.file().view, expected);
+        assert!(!expected.is_empty());
     }
 
     #[test]
@@ -1191,5 +1530,86 @@ mod tests {
         assert_eq!(file.lines.len(), MAX_LINES_PER_FILE);
         assert!(file.truncated);
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn soak_large_bundle_open_and_scan() {
+        let dir = tmp_name("soak-bundle");
+        fs::create_dir_all(dir.join("svc")).unwrap();
+        // Hundreds of small logs with a mix of clean + notable lines.
+        for i in 0..350 {
+            let body = if i % 17 == 0 {
+                format!("INFO start\nERROR Certificate validation failed for host-{i}\nINFO done\n")
+            } else if i % 23 == 0 {
+                format!("WARN noise\nconnection refused to peer-{i}\nINFO ok\n")
+            } else {
+                format!("INFO heartbeat {i}\nDEBUG tick\n")
+            };
+            fs::write(dir.join("svc").join(format!("{i:04}.log")), body).unwrap();
+        }
+        // Binary decoy that must be skipped.
+        fs::write(dir.join("svc").join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+
+        let mut app = App::new(&[dir.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert!(
+            app.files.len() >= 300,
+            "expected a large open set, got {}",
+            app.files.len()
+        );
+        assert!(app.files.len() <= MAX_OPEN_FILES);
+        assert!(app.files.iter().all(|f| !f.name.contains("blob.bin")));
+
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+        assert!(
+            app.findings
+                .iter()
+                .all(|f| app.signatures[f.sig].severity >= Severity::Medium)
+        );
+        // Cap must hold even on a large corpus.
+        assert!(app.findings.len() <= MAX_FINDINGS);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn soak_hostile_zip_opens_safely() {
+        let dir = tmp_name("soak-zip");
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("bundle.zip");
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            for i in 0..80 {
+                zip.start_file(format!("n{i}/agent.log"), opts).unwrap();
+                zip.write_all(format!("ERROR Certificate validation failed node-{i}\n").as_bytes())
+                    .unwrap();
+            }
+            zip.start_file("../escape.log", opts).unwrap();
+            zip.write_all(b"nope\n").unwrap();
+            zip.start_file("noise.bin", opts).unwrap();
+            zip.write_all(&[0u8; 64]).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let mut app = App::new(&[zip_path.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert!(app.has_files());
+        assert!(app.files.len() >= 50);
+        assert!(app.files.iter().all(|f| !f.name.contains("..")));
+        assert!(app.files.iter().all(|f| !f.name.contains("noise.bin")));
+        run_scan_to_completion(&mut app);
+        assert!(
+            app.findings
+                .iter()
+                .any(|f| app.signatures[f.sig].title.contains("Certificate"))
+        );
+        // Dropping the app must clean temp extract dirs.
+        let temps: Vec<_> = app.temp_dirs.clone();
+        drop(app);
+        for t in temps {
+            assert!(!t.exists(), "temp extract dir should be removed on Drop");
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 }

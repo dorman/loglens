@@ -142,20 +142,9 @@ pub fn builtin() -> Vec<Signature> {
             "A permission or authorization check failed — may block the product from operating correctly.",
             r"(?i)(access denied|permission denied|unauthorized|0x80070005|e_accessdenied)",
         ),
-        (
-            Low,
-            "error",
-            "Generic error",
-            "A line logged at ERROR level — worth a look but not inherently suspicious.",
-            r"(?i)\b(error|failed|failure)\b",
-        ),
-        (
-            Info,
-            "warning",
-            "Warning",
-            "A line logged at WARN level — informational context.",
-            r"(?i)\bwarn(ing)?\b",
-        ),
+        // Deliberately omit catch-all "error" / "warn" signatures: they flood
+        // real logs, burn the findings cap, and bury Medium+ triage signals.
+        // Use keyword highlights (`a` / `-k ERROR,WARN`) for that volume instead.
     ];
 
     DEFS.iter()
@@ -178,11 +167,126 @@ pub fn builtin() -> Vec<Signature> {
 mod tests {
     use super::*;
 
+    fn sigs() -> Vec<Signature> {
+        builtin()
+    }
+
+    fn titles_matching(line: &str) -> Vec<&'static str> {
+        sigs()
+            .iter()
+            .filter(|s| s.regex.is_match(line))
+            .map(|s| s.title)
+            .collect()
+    }
+
     #[test]
     fn all_builtin_signatures_compile() {
-        let sigs = builtin();
+        let sigs = sigs();
         assert!(!sigs.is_empty());
         // Every definition must compile — builtin() panics otherwise.
         assert!(sigs.iter().any(|s| s.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn severity_ordering_critical_gt_info() {
+        assert!(Severity::Critical > Severity::High);
+        assert!(Severity::High > Severity::Medium);
+        assert!(Severity::Medium > Severity::Low);
+        assert!(Severity::Low > Severity::Info);
+    }
+
+    #[test]
+    fn matches_encoded_powershell_sample_line() {
+        let line = "WARN  Suspicious process detected: powershell.exe -enc <base64>";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("PowerShell")),
+            "expected encoded PowerShell signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_certificate_validation_failure() {
+        let line = "ERROR Certificate validation failed for update.example.com";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("Certificate")),
+            "expected cert failure signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_clock_rollback_phrase() {
+        let line = "ERROR License validation failed: rollback detected on system clock";
+        let titles = titles_matching(line);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.contains("Clock") || t.contains("rollback")),
+            "expected clock rollback signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_connection_refused() {
+        let line = "connection refused while contacting update.example.com:443";
+        let titles = titles_matching(line);
+        assert!(
+            titles.iter().any(|t| t.contains("Connection")),
+            "expected connection signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn matches_installer_rollback() {
+        let line = "Error 1603: Fatal error during installation — rolling back";
+        let titles = titles_matching(line);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.contains("Installer") || t.contains("rollback")),
+            "expected installer rollback signature, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn clean_info_line_is_not_an_error_finding() {
+        let line = "2026-07-22 10:00:01 INFO  Starting AV agent service v14.2.1";
+        let titles = titles_matching(line);
+        assert!(
+            titles.is_empty(),
+            "clean INFO startup line should not match: {titles:?}"
+        );
+    }
+
+    #[test]
+    fn catch_all_error_and_warn_are_not_scan_signatures() {
+        // Broad ERROR/WARN lines must not produce findings on their own —
+        // those belong in keyword highlights, not the triage panel.
+        let error_line = "2026-07-22 10:00:07 ERROR something went sideways in module X";
+        let warn_line = "2026-07-22 10:00:05 WARN  Real-time protection module took 3200ms";
+        assert!(
+            titles_matching(error_line).is_empty(),
+            "generic ERROR must not be a scan signature: {:?}",
+            titles_matching(error_line)
+        );
+        assert!(
+            titles_matching(warn_line).is_empty(),
+            "generic WARN must not be a scan signature: {:?}",
+            titles_matching(warn_line)
+        );
+        assert!(
+            !sigs()
+                .iter()
+                .any(|s| s.title == "Generic error" || s.title == "Warning")
+        );
+    }
+
+    #[test]
+    fn builtin_signatures_are_medium_or_higher() {
+        assert!(
+            sigs().iter().all(|s| s.severity >= Severity::Medium),
+            "scan signatures should stay at Medium+ to avoid findings flood"
+        );
     }
 }

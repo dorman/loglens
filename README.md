@@ -34,33 +34,31 @@ logs) and need to spot trouble fast.
 
 ## Quick start
 
-### 1. Install Rust (once)
+### 1. Install
 
-macOS / Linux:
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
-
-Windows: install from <https://rustup.rs>.
-
-### 2. Install loglens
+**Current (pre-release):** install from source. A public binary / crates.io
+release is planned for later; until then there are no GitHub Release assets
+and the crate is not published.
 
 ```sh
+# Requires Rust 1.85+ — https://rustup.rs
 git clone https://github.com/dorman/loglens.git
 cd loglens
-cargo install --path .
+cargo install --path . --locked
 ```
 
-This builds a release binary and puts `loglens` on your PATH
-(`~/.cargo/bin`). Teammates with repo access can skip the clone:
+Teammates with repo access can also:
 
 ```sh
-cargo install --git https://github.com/dorman/loglens
+cargo install --git https://github.com/dorman/loglens --locked
 ```
 
-### 3. Run it
+**Later (public release):** prebuilt archives will ship via
+[GitHub Releases](https://github.com/dorman/loglens/releases) (see
+`scripts/install.sh`), and `cargo install loglens` will work from crates.io
+once published. Do not tag or publish until testing is complete.
+
+### 2. Run it
 
 ```sh
 loglens                      # opens the welcome screen — press o to browse
@@ -95,7 +93,9 @@ lives in **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
 ```sh
 cargo build            # debug build
-cargo clippy           # lints (kept at zero warnings)
+cargo test             # unit tests (run from the crate root)
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 cargo run -- samples/bundle
 ```
 

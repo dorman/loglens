@@ -2,6 +2,15 @@
 name = "loglens"
 version = "0.21.0"
 edition = "2024"
+description = "Grammarly for logs — interactive TUI to highlight, scan, and triage diagnostic logs"
+license = "MIT"
+repository = "https://github.com/dorman/loglens"
+homepage = "https://github.com/dorman/loglens"
+documentation = "https://github.com/dorman/loglens/blob/master/docs/USER_GUIDE.md"
+readme = "README.md"
+keywords = ["logs", "tui", "diagnostics", "cli", "triage"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["samples/big.log", "target/", ".github/"]
 
 [dependencies]
 anyhow = "1.0.104"

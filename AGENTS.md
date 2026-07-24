@@ -9,10 +9,15 @@
 
 ### Build / lint / test / run
 Standard commands (also documented in `README.md` "Development"):
-- Build: `cargo build`
-- Lint: `cargo clippy` (kept at zero warnings)
-- Test: `cargo test` (unit tests live inline in `src/*.rs`)
+- Build: `cargo build` / `cargo build --release`
+- Lint: `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check`
+- Test: `cargo test` (unit tests live inline in `src/*.rs`; must run from the crate root so `samples/` resolves)
 - Run: `cargo run -- samples/bundle` (or any file/folder/.zip)
+- Install smoke: `cargo install --path . --locked && loglens --version`
+- Release: hold tagging/`cargo publish` until after merge + thorough testing
+  (public release planned later). When ready: tag `v*` on `master` for GitHub
+  Release binaries (`.github/workflows/release.yml`); publish to crates.io
+  separately only when intentionally cutting that release.
 
 ### Running the TUI (non-obvious)
 - `loglens` is a full-screen interactive TUI using crossterm raw mode + alternate screen and mouse capture. It requires a real TTY; it does not run headless. To demo it in cloud, run it inside a terminal emulator via computer use, not by piping stdin.

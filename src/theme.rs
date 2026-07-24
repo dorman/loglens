@@ -52,9 +52,8 @@ pub fn lerp_color(a: Color, b: Color, t: f64) -> Color {
     };
     match (parts(a), parts(b)) {
         (Some((ar, ag, ab)), Some((br, bg, bb))) => {
-            let mix = |x: u8, y: u8| {
-                (x as f64 + (y as f64 - x as f64) * t.clamp(0.0, 1.0)).round() as u8
-            };
+            let mix =
+                |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * t.clamp(0.0, 1.0)).round() as u8;
             Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
         }
         _ => a,
