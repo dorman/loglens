@@ -13,6 +13,9 @@ use crate::ui;
 
 /// Lines scanned per rendered frame while a scan is running.
 const SCAN_CHUNK: usize = 4000;
+/// Lines of highlight-matching per frame while rules are being rescanned.
+/// Slightly smaller than [`SCAN_CHUNK`] because each line may run many regexes.
+const RESCAN_CHUNK: usize = 2000;
 
 /// Key kinds that should drive the UI. Accept both Press and Repeat:
 /// some terminals and automated input inject Repeat (or only one of the
@@ -33,12 +36,16 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        // While scanning, advance a chunk per frame and drain the whole input
-        // queue (only Esc/q act, everything else is discarded) so the progress
-        // bar animates, cancel stays responsive, and buffered keystrokes don't
-        // burst-execute as commands the moment the scan finishes.
-        if app.scanning() {
-            app.scan_step(SCAN_CHUNK);
+        // While a signature scan or highlight rescan is running, advance a
+        // chunk per frame and drain the input queue (only Esc/q act) so the
+        // progress bar animates, cancel stays responsive, and buffered keys
+        // don't burst-execute as commands the moment the work finishes.
+        if app.busy() {
+            if app.scanning() {
+                app.scan_step(SCAN_CHUNK);
+            } else if app.rescanning() {
+                app.rescan_step(RESCAN_CHUNK);
+            }
             let mut timeout = Duration::from_millis(8);
             while event::poll(timeout)? {
                 timeout = Duration::ZERO;
@@ -46,7 +53,11 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     && key_is_actionable(key.kind)
                     && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
                 {
-                    app.cancel_scan();
+                    if app.scanning() {
+                        app.cancel_scan();
+                    } else {
+                        app.cancel_rescan();
+                    }
                 }
             }
             continue;

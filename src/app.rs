@@ -49,6 +49,41 @@ pub struct ScanState {
     pub findings: Vec<Finding>,
 }
 
+/// Fresh highlight-match data for one file, built off to the side during a
+/// chunked rescan so cancel can drop the work without leaving half-updated tabs.
+struct FileMatchData {
+    matches: Vec<Vec<MatchSpan>>,
+    match_lines: Vec<usize>,
+    rule_counts: Vec<usize>,
+    total_matches: usize,
+}
+
+impl FileMatchData {
+    fn new(rule_count: usize, line_capacity: usize) -> Self {
+        Self {
+            matches: Vec::with_capacity(line_capacity),
+            match_lines: Vec::new(),
+            rule_counts: vec![0; rule_count],
+            total_matches: 0,
+        }
+    }
+}
+
+/// In-progress highlight rescan, advanced a chunk at a time like [`ScanState`]
+/// so adding/removing rules over a large corpus cannot freeze the TUI.
+pub struct RescanState {
+    pub file: usize,
+    pub line: usize,
+    pub processed: usize,
+    pub total: usize,
+    /// Completed files awaiting commit; `None` means "not finished yet".
+    pending: Vec<Option<FileMatchData>>,
+    /// Match data for the file currently being rescanned.
+    current: Option<FileMatchData>,
+    /// Status to show once the rescan commits (e.g. "added highlight: ERROR").
+    done_status: Option<String>,
+}
+
 /// Screen rectangles recorded during rendering so the mouse handler can
 /// hit-test clicks against what is actually on screen.
 #[derive(Default, Clone)]
@@ -146,54 +181,27 @@ impl LogFile {
     }
 
     /// Recompute all highlight match spans against the current rule set.
+    /// Used for initial file load; interactive rule changes go through the
+    /// chunked [`App::begin_rescan`] path so the UI stays responsive.
     pub fn rescan(&mut self, rules: &[Rule]) {
-        let mut matches: Vec<Vec<MatchSpan>> = Vec::with_capacity(self.lines.len());
-        let mut match_lines = Vec::new();
-        let mut rule_counts = vec![0usize; rules.len()];
-        let mut total_matches = 0usize;
-
-        'lines: for (i, line) in self.lines.iter().enumerate() {
-            let mut spans = Vec::new();
-            for (rule_idx, rule) in rules.iter().enumerate() {
-                for m in rule.regex.find_iter(line) {
-                    // Skip zero-width matches; they add no visual value and can
-                    // explode span counts for patterns like `a*`.
-                    if m.start() == m.end() {
-                        continue;
-                    }
-                    spans.push(MatchSpan {
-                        start: m.start(),
-                        end: m.end(),
-                        rule: rule_idx,
-                    });
-                    rule_counts[rule_idx] += 1;
-                    total_matches += 1;
-                    if spans.len() >= MAX_MATCHES_PER_LINE || total_matches >= MAX_MATCHES_PER_FILE
-                    {
-                        break;
-                    }
-                }
-                if spans.len() >= MAX_MATCHES_PER_LINE || total_matches >= MAX_MATCHES_PER_FILE {
-                    break;
-                }
-            }
-            if !spans.is_empty() {
-                spans.sort_by_key(|s| s.start);
-                match_lines.push(i);
-            }
-            matches.push(spans);
-            if total_matches >= MAX_MATCHES_PER_FILE {
+        let mut data = FileMatchData::new(rules.len(), self.lines.len());
+        for (i, line) in self.lines.iter().enumerate() {
+            if data.total_matches >= MAX_MATCHES_PER_FILE {
                 // Fill remaining lines with empty match lists so indices stay aligned.
-                for _ in (i + 1)..self.lines.len() {
-                    matches.push(Vec::new());
+                for _ in i..self.lines.len() {
+                    data.matches.push(Vec::new());
                 }
-                break 'lines;
+                break;
             }
+            let spans = match_line(line, rules, &mut data);
+            if !spans.is_empty() {
+                data.match_lines.push(i);
+            }
+            data.matches.push(spans);
         }
-
-        self.matches = matches;
-        self.match_lines = match_lines;
-        self.rule_counts = rule_counts;
+        self.matches = data.matches;
+        self.match_lines = data.match_lines;
+        self.rule_counts = data.rule_counts;
     }
 
     /// Rebuild `view` for the current filter/search state, keeping the cursor on
@@ -242,6 +250,41 @@ fn sanitize_log_line(line: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Match one log line against every highlight rule, respecting per-line /
+/// per-file match caps. Updates `data`'s running counts.
+fn match_line(line: &str, rules: &[Rule], data: &mut FileMatchData) -> Vec<MatchSpan> {
+    let mut spans = Vec::new();
+    if data.total_matches >= MAX_MATCHES_PER_FILE {
+        return spans;
+    }
+    for (rule_idx, rule) in rules.iter().enumerate() {
+        for m in rule.regex.find_iter(line) {
+            // Skip zero-width matches; they add no visual value and can
+            // explode span counts for patterns like `a*`.
+            if m.start() == m.end() {
+                continue;
+            }
+            spans.push(MatchSpan {
+                start: m.start(),
+                end: m.end(),
+                rule: rule_idx,
+            });
+            data.rule_counts[rule_idx] += 1;
+            data.total_matches += 1;
+            if spans.len() >= MAX_MATCHES_PER_LINE || data.total_matches >= MAX_MATCHES_PER_FILE {
+                break;
+            }
+        }
+        if spans.len() >= MAX_MATCHES_PER_LINE || data.total_matches >= MAX_MATCHES_PER_FILE {
+            break;
+        }
+    }
+    if !spans.is_empty() {
+        spans.sort_by_key(|s| s.start);
+    }
+    spans
 }
 
 /// Split log text into owned lines, truncating overlong lines and stopping at
@@ -316,6 +359,8 @@ pub struct App {
     pub show_findings: bool,
     /// Present while a scan is running.
     pub scan: Option<ScanState>,
+    /// Present while highlight rules are being rescanned across open files.
+    pub rescan: Option<RescanState>,
 
     pub input_kind: InputKind,
     pub input_buffer: String,
@@ -370,6 +415,7 @@ impl App {
             findings_sel: 0,
             show_findings: false,
             scan: None,
+            rescan: None,
             input_kind: InputKind::Keyword,
             input_buffer: String::new(),
             show_legend: true,
@@ -553,8 +599,7 @@ impl App {
                 ) {
                     Ok(rule) => {
                         self.rules.push(rule);
-                        self.rescan_all();
-                        self.status = Some(format!("added highlight: {text}"));
+                        self.begin_rescan(Some(format!("added highlight: {text}")));
                     }
                     Err(e) => self.status = Some(format!("{e}")),
                 }
@@ -567,8 +612,7 @@ impl App {
             if self.active_rule == Some(self.rules.len()) {
                 self.active_rule = None;
             }
-            self.rescan_all();
-            self.status = Some(format!("removed highlight: {}", rule.label));
+            self.begin_rescan(Some(format!("removed highlight: {}", rule.label)));
         }
     }
 
@@ -597,13 +641,13 @@ impl App {
             self.active_rule = None;
         }
         self.rules = rebuilt;
-        self.rescan_all();
         let case = if self.ignore_case { "on" } else { "off" };
-        self.status = Some(if dropped > 0 {
+        let status = if dropped > 0 {
             format!("case-insensitive: {case} ({dropped} rule(s) dropped — failed to recompile)")
         } else {
             format!("case-insensitive: {case}")
-        });
+        };
+        self.begin_rescan(Some(status));
     }
 
     /// Cycle dark → light → high-contrast and recolor highlight rules.
@@ -704,12 +748,156 @@ impl App {
         self.ensure_cursor_visible();
     }
 
-    fn rescan_all(&mut self) {
-        let rules = &self.rules;
-        for f in &mut self.files {
-            f.rescan(rules);
+    /// Start a chunked highlight rescan. New match data is built off to the
+    /// side and committed only on completion, so Esc can cancel cleanly.
+    pub fn begin_rescan(&mut self, done_status: Option<String>) {
+        // Don't interleave with a signature scan — cancel it first.
+        self.cancel_scan();
+        self.rescan = None;
+
+        if self.files.is_empty() {
+            self.status = done_status;
+            return;
         }
+
+        let total: usize = self.files.iter().map(|f| f.lines.len()).sum();
+        self.rescan = Some(RescanState {
+            file: 0,
+            line: 0,
+            processed: 0,
+            total,
+            pending: (0..self.files.len()).map(|_| None).collect(),
+            current: None,
+            done_status,
+        });
+        self.status = Some("updating highlights…".into());
+        if total == 0 {
+            let _ = self.rescan_step(1);
+        }
+    }
+
+    /// Process up to `budget` lines of the running highlight rescan.
+    /// Returns true when finished (matches committed, views rebuilt).
+    pub fn rescan_step(&mut self, budget: usize) -> bool {
+        let Some(mut st) = self.rescan.take() else {
+            return true;
+        };
+        let mut done = 0;
+        while done < budget {
+            if st.file >= self.files.len() {
+                self.finalize_rescan(st);
+                return true;
+            }
+            let flen = self.files[st.file].lines.len();
+            if st.current.is_none() {
+                st.current = Some(FileMatchData::new(self.rules.len(), flen));
+                st.line = 0;
+            }
+            let capped = st
+                .current
+                .as_ref()
+                .is_some_and(|c| c.total_matches >= MAX_MATCHES_PER_FILE);
+            if st.line >= flen || capped {
+                // Pad remaining lines if we hit the per-file match cap early.
+                if let Some(cur) = st.current.as_mut() {
+                    while cur.matches.len() < flen {
+                        cur.matches.push(Vec::new());
+                    }
+                }
+                let remaining = flen.saturating_sub(st.line);
+                st.processed += remaining;
+                st.pending[st.file] = st.current.take();
+                st.file += 1;
+                st.line = 0;
+                continue;
+            }
+
+            let spans = match_line(
+                &self.files[st.file].lines[st.line],
+                &self.rules,
+                st.current.as_mut().expect("current file data"),
+            );
+            if !spans.is_empty() {
+                st.current
+                    .as_mut()
+                    .expect("current file data")
+                    .match_lines
+                    .push(st.line);
+            }
+            st.current
+                .as_mut()
+                .expect("current file data")
+                .matches
+                .push(spans);
+            st.line += 1;
+            st.processed += 1;
+            done += 1;
+        }
+        self.rescan = Some(st);
+        false
+    }
+
+    fn finalize_rescan(&mut self, st: RescanState) {
+        // Commit every finished file. Any gap (shouldn't happen) falls back to
+        // a synchronous rescan so tabs never keep stale rule indices.
+        for (i, slot) in st.pending.into_iter().enumerate() {
+            if i >= self.files.len() {
+                break;
+            }
+            if let Some(data) = slot {
+                let f = &mut self.files[i];
+                f.matches = data.matches;
+                f.match_lines = data.match_lines;
+                f.rule_counts = data.rule_counts;
+            } else {
+                let rules = &self.rules;
+                self.files[i].rescan(rules);
+            }
+        }
+        // If we were mid-file when somehow finalized, discard — pending covers
+        // completed files only; `current` is dropped with `st`.
         self.rebuild_views();
+        self.rescan = None;
+        self.status = st.done_status.or_else(|| Some("highlights updated".into()));
+    }
+
+    pub fn cancel_rescan(&mut self) {
+        if self.rescan.take().is_some() {
+            // Pending work is dropped; previously committed highlights stay.
+            self.status = Some("highlight update cancelled".into());
+        }
+    }
+
+    pub fn rescanning(&self) -> bool {
+        self.rescan.is_some()
+    }
+
+    /// True while a signature scan or highlight rescan is running.
+    pub fn busy(&self) -> bool {
+        self.scanning() || self.rescanning()
+    }
+
+    /// Fraction complete (0.0..=1.0) of the running highlight rescan, if any.
+    pub fn rescan_fraction(&self) -> Option<f64> {
+        self.rescan.as_ref().map(|s| {
+            if s.total == 0 {
+                1.0
+            } else {
+                s.processed as f64 / s.total as f64
+            }
+        })
+    }
+
+    /// (lines processed, total lines, current file name).
+    pub fn rescan_detail(&self) -> Option<(usize, usize, String)> {
+        self.rescan.as_ref().map(|s| {
+            let name = self
+                .files
+                .get(s.file)
+                .map(|f| f.name.clone())
+                .unwrap_or_default();
+            (s.processed, s.total, name)
+        })
     }
 
     fn rebuild_views(&mut self) {
@@ -919,6 +1107,8 @@ impl App {
             self.status = Some("open a file before scanning".into());
             return;
         }
+        // Don't interleave with a highlight rescan.
+        self.cancel_rescan();
         self.show_findings = false;
         self.findings.clear();
         let mut total = 0;
@@ -1251,6 +1441,16 @@ mod tests {
             }
         }
         panic!("scan did not finish");
+    }
+
+    fn run_rescan_to_completion(app: &mut App) {
+        // Bound iterations so a stuck rescan fails the test instead of hanging CI.
+        for _ in 0..100_000 {
+            if !app.rescanning() || app.rescan_step(10_000) {
+                return;
+            }
+        }
+        panic!("rescan did not finish");
     }
 
     #[test]
@@ -1612,9 +1812,132 @@ mod tests {
         app.active_rule = Some(0);
         assert!(app.file().total_matches() > 0);
         app.remove_last_rule();
+        run_rescan_to_completion(&mut app);
         assert!(app.rules.is_empty());
         assert_eq!(app.active_rule, None);
         assert_eq!(app.file().total_matches(), 0);
+    }
+
+    #[test]
+    fn chunked_rescan_commits_matches_and_stays_cancellable() {
+        let dir = tmp_name("rescan-chunk");
+        fs::create_dir_all(&dir).unwrap();
+        // Large enough that a single keystroke cannot finish the rescan.
+        let mut body = String::new();
+        for i in 0..12_000 {
+            if i % 50 == 0 {
+                body.push_str("ERROR boom\n");
+            } else {
+                body.push_str("INFO ok\n");
+            }
+        }
+        let path = dir.join("big.log");
+        fs::write(&path, body).unwrap();
+
+        let mut app = App::new(&[path.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert_eq!(app.file().lines.len(), 12_000);
+        assert_eq!(app.file().total_matches(), 0);
+
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        assert!(app.rescanning(), "large corpus must start a chunked rescan");
+        assert_eq!(
+            app.file().total_matches(),
+            0,
+            "old highlights must remain until commit"
+        );
+
+        // One small step should not finish.
+        assert!(!app.rescan_step(500));
+        assert!(app.rescanning());
+        assert_eq!(app.file().total_matches(), 0);
+
+        // Cancel drops pending work and keeps prior (empty) matches.
+        app.cancel_rescan();
+        assert!(!app.rescanning());
+        assert_eq!(app.file().total_matches(), 0);
+        assert!(app.status.as_deref().unwrap_or("").contains("cancelled"));
+
+        // Restart and finish — matches commit and filter views rebuild.
+        // Rule from the cancelled attempt is still present; rescan it in place.
+        assert_eq!(app.rules.len(), 1);
+        app.begin_rescan(Some("added highlight: ERROR".into()));
+        run_rescan_to_completion(&mut app);
+        assert!(!app.rescanning());
+        assert!(app.file().total_matches() > 0);
+        assert_eq!(app.file().rule_counts[0], app.file().total_matches());
+        assert_eq!(app.file().total_matches(), 240); // every 50th of 12_000 lines
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("added highlight")
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn begin_scan_cancels_in_flight_rescan() {
+        let dir = tmp_name("rescan-vs-scan");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("x.log");
+        fs::write(&path, "ERROR a\n".repeat(8_000)).unwrap();
+        let mut app = App::new(&[path.to_string_lossy().into()], Vec::new(), false).unwrap();
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        assert!(app.rescanning());
+        app.begin_scan();
+        assert!(!app.rescanning());
+        assert!(app.scanning());
+        app.cancel_scan();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn soak_chunked_rescan_over_near_cap_corpus() {
+        let dir = tmp_name("rescan-soak");
+        fs::create_dir_all(&dir).unwrap();
+        // Several medium files — enough lines that hitching would be obvious,
+        // but still cheap enough for CI. Exercise many rules + chunked steps.
+        for n in 0..8 {
+            let mut body = String::new();
+            for i in 0..8_000 {
+                body.push_str(if i % 40 == 0 { "ERROR x\n" } else { "INFO y\n" });
+            }
+            fs::write(dir.join(format!("{n}.log")), body).unwrap();
+        }
+        let mut app = App::new(&[dir.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert!(app.files.len() >= 8);
+
+        let mut rules = Vec::new();
+        for i in 0..16 {
+            rules.push(
+                rules::compile_rule(&format!("ERR{i}"), false, true, i, &Theme::dark()).unwrap(),
+            );
+        }
+        rules.push(rules::compile_rule("ERROR", false, true, 16, &Theme::dark()).unwrap());
+        app.rules = rules;
+        app.begin_rescan(Some("soak rescan done".into()));
+        assert!(app.rescanning());
+
+        let mut steps = 0usize;
+        for _ in 0..100_000 {
+            steps += 1;
+            if app.rescan_step(1_500) {
+                break;
+            }
+            assert!(app.busy());
+        }
+        assert!(!app.rescanning(), "soak rescan should finish");
+        assert!(steps > 1, "expected multiple chunks, got {steps}");
+        let total: usize = app.files.iter().map(|f| f.total_matches()).sum();
+        assert!(total > 0, "ERROR rule should match");
+        assert_eq!(app.status.as_deref(), Some("soak rescan done"));
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
