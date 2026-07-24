@@ -14,6 +14,7 @@ Standard commands (also documented in `README.md` "Development"):
 - Test: `cargo test` (unit tests live inline in `src/*.rs`; must run from the crate root so `samples/` resolves)
 - Run: `cargo run -- samples/bundle` (or any file/folder/.zip)
 - Install smoke: `cargo install --path . --locked && loglens --version`
+- Release binaries: push a `v*` tag (see `.github/workflows/release.yml`) or run the Release workflow; publish to crates.io with `cargo publish` after tagging.
 
 ### Running the TUI (non-obvious)
 - `loglens` is a full-screen interactive TUI using crossterm raw mode + alternate screen and mouse capture. It requires a real TTY; it does not run headless. To demo it in cloud, run it inside a terminal emulator via computer use, not by piping stdin.
