@@ -136,7 +136,8 @@ You can also click an entry to select it, and wheel-scroll the list.
 
 ### Managing open files
 
-- `Tab` / `Shift-Tab` — switch between tabs
+- `Tab` / `]` — next tab
+- `Shift-Tab` / `[` — previous tab
 - `w` — close the current file
 - `o` — reopen the browser to add more
 
@@ -264,8 +265,8 @@ input prompt, never interpreted as keystrokes.
 Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`n`/`N` next/prev match · `Tab`/`Shift-Tab` switch file · `o` file browser ·
-`w` close file · `q` quit
+`n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
+`o` file browser · `w` close file · `q` quit
 
 **Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
 

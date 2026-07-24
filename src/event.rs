@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use ratatui::DefaultTerminal;
 use ratatui::layout::Rect;
@@ -12,6 +13,21 @@ use crate::ui;
 
 /// Lines scanned per rendered frame while a scan is running.
 const SCAN_CHUNK: usize = 4000;
+
+/// Key kinds that should drive the UI. Accept both Press and Repeat:
+/// some terminals and automated input inject Repeat (or only one of the
+/// two), and ignoring Repeat made held keys / burst typing look broken.
+fn key_is_actionable(kind: KeyEventKind) -> bool {
+    matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
+fn dispatch_key(app: &mut App, key: KeyEvent) {
+    match app.mode {
+        Mode::Input => handle_input(app, key.code),
+        Mode::Browser => handle_browser(app, key.code),
+        Mode::Viewer => handle_viewer(app, key.code, key.modifiers),
+    }
+}
 
 pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     while !app.should_quit {
@@ -27,7 +43,7 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             while event::poll(timeout)? {
                 timeout = Duration::ZERO;
                 if let Event::Key(key) = event::read()?
-                    && key.kind == KeyEventKind::Press
+                    && key_is_actionable(key.kind)
                     && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
                 {
                     app.cancel_scan();
@@ -38,13 +54,25 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 
         match event::read()? {
             Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
+                if !key_is_actionable(key.kind) {
                     continue;
                 }
-                match app.mode {
-                    Mode::Input => handle_input(app, key.code),
-                    Mode::Browser => handle_browser(app, key.code),
-                    Mode::Viewer => handle_viewer(app, key.code, key.modifiers),
+                dispatch_key(app, key);
+                // While the input prompt is open, drain any already-queued
+                // keystrokes/pastes before the next redraw. Fast typists and
+                // automation often deliver a burst between frames; handling
+                // them together keeps characters from appearing "lost".
+                if app.mode == Mode::Input {
+                    while event::poll(Duration::ZERO)? {
+                        match event::read()? {
+                            Event::Key(k) if key_is_actionable(k.kind) => dispatch_key(app, k),
+                            Event::Paste(text) => app.push_input_chars(text.chars()),
+                            _ => {}
+                        }
+                        if app.mode != Mode::Input {
+                            break;
+                        }
+                    }
                 }
             }
             Event::Mouse(m) => handle_mouse(app, m),
@@ -248,8 +276,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('G') | KeyCode::End => app.go_bottom(),
         KeyCode::Char('n') => app.next_match(),
         KeyCode::Char('N') => app.prev_match(),
-        KeyCode::Tab => app.next_file(),
-        KeyCode::BackTab => app.prev_file(),
+        KeyCode::Tab | KeyCode::Char(']') => app.next_file(),
+        KeyCode::BackTab | KeyCode::Char('[') => app.prev_file(),
         // Scan for known-bad signatures.
         KeyCode::Char('S') => app.begin_scan(),
         // Search & filter (require an open file — otherwise search_hits would
@@ -365,6 +393,48 @@ mod tests {
         assert_eq!(app.mode, Mode::Viewer);
         assert_eq!(app.rules.len(), 1);
         assert_eq!(app.rules[0].label, "X");
+    }
+
+    #[test]
+    fn burst_typing_into_input_prompt() {
+        // Simulates the automation / fast-typist case: many chars arrive
+        // back-to-back after opening the prompt.
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Input);
+        for c in "ERROR".chars() {
+            handle_input(&mut app, KeyCode::Char(c));
+        }
+        assert_eq!(app.input_buffer, "ERROR");
+        handle_input(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Viewer);
+        assert_eq!(app.rules.len(), 1);
+        assert_eq!(app.rules[0].label, "ERROR");
+        assert!(key_is_actionable(KeyEventKind::Press));
+        assert!(key_is_actionable(KeyEventKind::Repeat));
+        assert!(!key_is_actionable(KeyEventKind::Release));
+    }
+
+    #[test]
+    fn bracket_keys_switch_files_like_tab() {
+        let mut app = App::new(
+            &["samples/sample.log".into(), "samples/network.log".into()],
+            Vec::new(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(app.files.len(), 2);
+        assert_eq!(app.current, 0);
+        handle_viewer(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+        assert_eq!(app.current, 1);
+        handle_viewer(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+        assert_eq!(app.current, 0);
+        handle_viewer(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
+        assert_eq!(app.current, 1);
+        handle_viewer(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.current, 0);
+        handle_viewer(&mut app, KeyCode::BackTab, KeyModifiers::NONE);
+        assert_eq!(app.current, 1);
     }
 
     #[test]
