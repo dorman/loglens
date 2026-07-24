@@ -1474,7 +1474,8 @@ mod tests {
         );
 
         for i in 0..MAX_RULES {
-            let rule = rules::compile_rule(&format!("k{i}"), false, false, i, &Theme::dark()).unwrap();
+            let rule =
+                rules::compile_rule(&format!("k{i}"), false, false, i, &Theme::dark()).unwrap();
             app.rules.push(rule);
         }
         app.begin_input(InputKind::Keyword);

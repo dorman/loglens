@@ -407,10 +407,7 @@ fn render_line_spans<'a>(
                     .add_modifier(Modifier::BOLD),
             ));
         } else if let Some(m) = rule_spans.iter().find(|m| m.start <= a && b <= m.end) {
-            let color = rules
-                .get(m.rule)
-                .map(|r| r.color)
-                .unwrap_or(theme.accent);
+            let color = rules.get(m.rule).map(|r| r.color).unwrap_or(theme.accent);
             spans.push(Span::styled(
                 &text[a..b],
                 Style::default()
@@ -443,16 +440,12 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Press  "),
                 Span::styled(
                     "f",
-                    Style::default()
-                        .fg(t.accent)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  to exit filter, or  "),
                 Span::styled(
                     "/",
-                    Style::default()
-                        .fg(t.accent)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  to search."),
             ]),
@@ -559,9 +552,7 @@ fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
             let marker = if active { "\u{25B8} " } else { "  " };
             let kind = if rule.is_regex { "re" } else { "kw" };
             let label_style = if active {
-                Style::default()
-                    .fg(t.text)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(t.text)
             };
@@ -569,10 +560,7 @@ fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(marker, Style::default().fg(t.accent)),
                 Span::styled("\u{2588}\u{2588} ", Style::default().fg(rule.color)),
                 Span::styled(format!("{} ", rule.label), label_style),
-                Span::styled(
-                    format!("{kind} {count}"),
-                    Style::default().fg(t.text_dim),
-                ),
+                Span::styled(format!("{kind} {count}"), Style::default().fg(t.text_dim)),
             ])));
         }
     }
@@ -725,9 +713,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn key(t: &Theme) -> Style {
-    Style::default()
-        .fg(t.accent)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
 }
 fn dim(t: &Theme) -> Style {
     Style::default().fg(t.text_dim)
@@ -799,9 +785,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
         let title_style = if is_sel {
-            Style::default()
-                .fg(t.text)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.text)
         };
@@ -844,9 +828,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(sig.category, Style::default().fg(t.accent)),
                 Span::styled(
                     format!("  {}", sig.title),
-                    Style::default()
-                        .fg(t.text)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.text).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(Span::styled(
@@ -936,17 +918,13 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let head = |s: &'static str| {
         Line::from(Span::styled(
             s,
-            Style::default()
-                .fg(t.accent)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         ))
     };
     let text = vec![
         Line::from(Span::styled(
             "loglens — keybindings",
-            Style::default()
-                .fg(t.text)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         head("Viewer"),
@@ -986,7 +964,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(t.text_dim),
         )),
     ];
-    let block = t.panel(" Help (? to close) ", true).title_alignment(Alignment::Center);
+    let block = t
+        .panel(" Help (? to close) ", true)
+        .title_alignment(Alignment::Center);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(text)
