@@ -74,8 +74,8 @@ separately when ready:
 ```sh
 git checkout master
 git pull
-git tag v0.22.0
-git push origin v0.22.0
+git tag v0.0.1
+git push origin v0.0.1
 # GitHub Actions attaches Linux/macOS/Windows archives to the release.
 # crates.io (optional, separate step — needs credentials):
 #   cargo publish
