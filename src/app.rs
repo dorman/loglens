@@ -230,6 +230,20 @@ impl LogFile {
     }
 }
 
+/// Replace C0/C1 control characters (except TAB) so hostile log content cannot
+/// inject ANSI / OSC sequences into the TUI and corrupt the host terminal.
+fn sanitize_log_line(line: &str) -> String {
+    line.chars()
+        .map(|c| {
+            if c == '\t' || !c.is_control() {
+                c
+            } else {
+                '\u{FFFD}'
+            }
+        })
+        .collect()
+}
+
 /// Split log text into owned lines, truncating overlong lines and stopping at
 /// [`MAX_LINES_PER_FILE`]. Returns `(lines, truncated)`.
 fn split_log_lines(content: &str) -> (Vec<String>, bool) {
@@ -240,15 +254,16 @@ fn split_log_lines(content: &str) -> (Vec<String>, bool) {
             truncated = true;
             break;
         }
-        if line.len() > MAX_LINE_BYTES {
+        let cleaned = sanitize_log_line(line);
+        if cleaned.len() > MAX_LINE_BYTES {
             truncated = true;
             let mut end = MAX_LINE_BYTES;
-            while end > 0 && !line.is_char_boundary(end) {
+            while end > 0 && !cleaned.is_char_boundary(end) {
                 end -= 1;
             }
-            lines.push(format!("{}…", &line[..end]));
+            lines.push(format!("{}…", &cleaned[..end]));
         } else {
-            lines.push(line.to_string());
+            lines.push(cleaned);
         }
     }
     // A trailing empty line after a final newline is usually noise; `str::lines`
@@ -369,14 +384,19 @@ impl App {
         };
 
         let paths: Vec<PathBuf> = inputs.iter().map(PathBuf::from).collect();
-        if !paths.is_empty() {
+        let had_inputs = !paths.is_empty();
+        if had_inputs {
             app.open_resolved(&paths);
         }
 
         // With no files, land on the branded welcome screen (press `o` to open
         // the browser); otherwise go straight to the viewer.
         app.mode = Mode::Viewer;
-        app.status = None;
+        // Keep open feedback when the user passed paths (success *or* failure).
+        // Only clear status for a bare welcome launch so the banner stays clean.
+        if !had_inputs {
+            app.status = None;
+        }
         Ok(app)
     }
 
@@ -1265,8 +1285,6 @@ mod tests {
 
     #[test]
     fn resolve_missing_path_sets_status_without_panic() {
-        // App::new clears status after the initial open, so exercise open_resolved
-        // directly to assert user-visible feedback.
         let mut app = App::new(&[], Vec::new(), false).unwrap();
         app.open_resolved(&[PathBuf::from("/nonexistent/loglens-missing-file.log")]);
         assert!(!app.has_files());
@@ -1275,6 +1293,103 @@ mod tests {
             status.contains("failed") || status.contains("no log"),
             "unexpected status: {status}"
         );
+    }
+
+    #[test]
+    fn startup_preserves_open_error_status() {
+        // Regression: App::new used to wipe status after the initial open, so a
+        // bad CLI path launched a silent welcome screen with no feedback.
+        let app = App::new(
+            &["/nonexistent/loglens-missing-file.log".into()],
+            Vec::new(),
+            false,
+        )
+        .unwrap();
+        assert!(!app.has_files());
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("failed") || status.contains("no log"),
+            "startup must surface open errors: {status}"
+        );
+    }
+
+    #[test]
+    fn startup_preserves_successful_open_status() {
+        let app = app_with_paths(&["samples/network.log"]);
+        assert!(app.has_files());
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("opened"),
+            "startup should keep open confirmation: {status}"
+        );
+    }
+
+    #[test]
+    fn welcome_launch_has_no_status() {
+        let app = App::new(&[], Vec::new(), false).unwrap();
+        assert!(!app.has_files());
+        assert_eq!(app.status, None);
+    }
+
+    #[test]
+    fn sanitizes_ansi_and_control_characters_in_log_lines() {
+        let path = tmp_name("ansi");
+        // ESC[31m, OSC hyperlink fragments, backspace, bare CR, BEL.
+        let hostile = "ERROR \x1b[31mred\x1b[0m\x07 secret\x08\rWARN done\n";
+        fs::write(&path, hostile).unwrap();
+        let file = LogFile::load(&path, "ansi.log".into(), &[]).unwrap();
+        assert_eq!(file.lines.len(), 1);
+        let line = &file.lines[0];
+        assert!(
+            !line.contains('\u{1b}') && !line.contains('\u{07}') && !line.contains('\r'),
+            "control chars must be sanitized: {line:?}"
+        );
+        assert!(
+            line.contains('�'),
+            "controls should become replacement char"
+        );
+        assert!(line.contains("ERROR") && line.contains("WARN"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn tabs_are_preserved_in_log_lines() {
+        let path = tmp_name("tabs");
+        fs::write(&path, "col1\tcol2\tcol3\n").unwrap();
+        let file = LogFile::load(&path, "tabs.log".into(), &[]).unwrap();
+        assert_eq!(file.lines[0], "col1\tcol2\tcol3");
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn empty_file_direct_open_succeeds_with_zero_lines() {
+        let path = tmp_name("empty");
+        fs::write(&path, b"").unwrap();
+        let file = LogFile::load(&path, "empty.log".into(), &[]).unwrap();
+        assert!(file.lines.is_empty());
+        assert!(file.view.is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn symlink_to_bundle_opens_like_directory() {
+        let link = tmp_name("link-bundle");
+        let _ = fs::remove_file(&link);
+        #[cfg(unix)]
+        {
+            let target = Path::new("samples/bundle")
+                .canonicalize()
+                .expect("samples/bundle must exist");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let app = App::new(&[link.to_string_lossy().into()], Vec::new(), false).unwrap();
+            assert!(app.has_files(), "symlinked bundle directory should resolve");
+            assert!(app.files.iter().any(|f| f.name.contains("agent.log")));
+            fs::remove_file(&link).ok();
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = link;
+        }
     }
 
     #[test]
@@ -1617,6 +1732,57 @@ mod tests {
         assert!(app.findings.len() <= MAX_FINDINGS);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn soak_dense_rules_over_big_log_stays_bounded() {
+        let mut rules = Vec::new();
+        // Mix of literal keywords and sparse regexes near the rule cap.
+        for i in 0..32 {
+            rules.push(
+                rules::compile_rule(&format!("ERR{i}"), false, true, i, &Theme::dark()).unwrap(),
+            );
+        }
+        for i in 0..16 {
+            rules.push(
+                rules::compile_rule(
+                    &format!("warn{{0,{i}}}"),
+                    true,
+                    true,
+                    32 + i,
+                    &Theme::dark(),
+                )
+                .unwrap(),
+            );
+        }
+        let path = Path::new("samples/big.log");
+        assert!(path.exists(), "samples/big.log must exist");
+        let file = LogFile::load(path, "big.log".into(), &rules).unwrap();
+        let total: usize = file.matches.iter().map(|m| m.len()).sum();
+        assert!(total <= MAX_MATCHES_PER_FILE);
+        assert_eq!(file.matches.len(), file.lines.len());
+        for spans in &file.matches {
+            assert!(spans.len() <= MAX_MATCHES_PER_LINE);
+        }
+    }
+
+    #[test]
+    fn mixed_valid_and_missing_cli_paths_keeps_status() {
+        let app = App::new(
+            &[
+                "samples/network.log".into(),
+                "/nonexistent/loglens-missing.log".into(),
+            ],
+            Vec::new(),
+            false,
+        )
+        .unwrap();
+        assert!(app.has_files());
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("failed") || status.contains("skipped"),
+            "partial open must report failures: {status}"
+        );
     }
 
     #[test]

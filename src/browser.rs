@@ -2,6 +2,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
+/// Cap directory listings so browsing a pathological folder (mail spool, node_modules,
+/// huge extract) cannot freeze the TUI allocating/sorting unbounded entries.
+const MAX_BROWSER_ENTRIES: usize = 5_000;
+
 pub struct Entry {
     pub name: String,
     pub path: PathBuf,
@@ -47,16 +51,21 @@ impl Browser {
 
         match fs::read_dir(&self.cwd) {
             Ok(rd) => {
-                let mut items: Vec<Entry> = rd
-                    .filter_map(|e| e.ok())
-                    .map(|e| {
-                        let path = e.path();
-                        let is_dir = path.is_dir();
-                        let name = e.file_name().to_string_lossy().to_string();
-                        Entry { name, path, is_dir }
-                    })
-                    .filter(|e| self.show_hidden || !e.name.starts_with('.'))
-                    .collect();
+                let mut truncated = false;
+                let mut items: Vec<Entry> = Vec::new();
+                for e in rd.filter_map(|e| e.ok()) {
+                    let path = e.path();
+                    let is_dir = path.is_dir();
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if !self.show_hidden && name.starts_with('.') {
+                        continue;
+                    }
+                    if items.len() >= MAX_BROWSER_ENTRIES {
+                        truncated = true;
+                        break;
+                    }
+                    items.push(Entry { name, path, is_dir });
+                }
                 // Directories first, then case-insensitive alphabetical.
                 items.sort_by(|a, b| {
                     b.is_dir
@@ -64,7 +73,13 @@ impl Browser {
                         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 });
                 entries.extend(items);
-                self.error = None;
+                self.error = if truncated {
+                    Some(format!(
+                        "directory listing truncated to {MAX_BROWSER_ENTRIES} entries"
+                    ))
+                } else {
+                    None
+                };
             }
             Err(e) => {
                 self.error = Some(format!("cannot read {}: {e}", self.cwd.display()));
@@ -247,6 +262,24 @@ mod tests {
         assert_eq!(browser.cwd, nested);
         assert!(browser.entries.iter().any(|e| e.name == "inside.log"));
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn refresh_caps_huge_directory_listings() {
+        let dir = tmp_dir("huge");
+        // Create well over the listing cap; should truncate instead of OOM/freeze.
+        for i in 0..(MAX_BROWSER_ENTRIES + 250) {
+            fs::write(dir.join(format!("f{i:05}.log")), b"x\n").unwrap();
+        }
+        let browser = Browser::new(dir.clone());
+        // "+1" accounts for the synthetic ".." entry.
+        assert!(browser.entries.len() <= MAX_BROWSER_ENTRIES + 1);
+        assert!(
+            browser.error.as_deref().unwrap_or("").contains("truncated"),
+            "expected truncation notice, got {:?}",
+            browser.error
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }

@@ -1054,4 +1054,22 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].style.fg, Some(theme.level_error));
     }
+
+    #[test]
+    fn render_line_spans_handles_replacement_chars_from_sanitized_ansi() {
+        let theme = Theme::dark();
+        // After sanitize_log_line, ESC sequences become U+FFFD — rendering must
+        // stay panic-free and preserve surrounding text.
+        let text = "ERROR \u{FFFD}[31mred\u{FFFD}[0m failed";
+        let rule = rules::compile_rule("ERROR", false, false, 0, &theme).unwrap();
+        let spans = [MatchSpan {
+            start: 0,
+            end: 5,
+            rule: 0,
+        }];
+        let out = render_line_spans(text, &spans, &[rule], None, &theme);
+        let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, text);
+        assert!(!joined.contains('\u{1b}'));
+    }
 }

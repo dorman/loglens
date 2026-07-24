@@ -459,6 +459,73 @@ mod tests {
     }
 
     #[test]
+    fn resolve_zip_with_unicode_names() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-unicode-zip-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("unicode.zip");
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("unicodé/café.log", opts).unwrap();
+            zip.write_all(b"ERROR Certificate validation failed\n")
+                .unwrap();
+            zip.finish().unwrap();
+        }
+        let outcome = resolve(&zip_path).unwrap();
+        assert!(!outcome.targets.is_empty());
+        assert!(outcome.temp_dir.is_some());
+        assert!(outcome.targets.iter().any(|t| {
+            t.name.contains('é') || t.name.contains("cafe") || t.name.contains(".log")
+        }));
+        if let Some(tmp) = outcome.temp_dir {
+            fs::remove_dir_all(tmp).ok();
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_zip_with_duplicate_names_opens_safely() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-dupe-zip-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("dupes.zip");
+        // Hand-crafted archive with two central-directory entries named a.log.
+        // ZipWriter refuses to emit these; hostile archives still can.
+        let bytes: &[u8] = &[
+            80, 75, 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 205, 41, 59, 10, 0, 0, 0, 10, 0, 0, 0,
+            5, 0, 0, 0, 97, 46, 108, 111, 103, 69, 82, 82, 79, 82, 32, 111, 110, 101, 10, 80, 75,
+            3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 217, 109, 41, 85, 10, 0, 0, 0, 10, 0, 0, 0, 5, 0,
+            0, 0, 97, 46, 108, 111, 103, 69, 82, 82, 79, 82, 32, 116, 119, 111, 10, 80, 75, 1, 2,
+            20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 205, 41, 59, 10, 0, 0, 0, 10, 0, 0, 0, 5, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 46, 108, 111, 103, 80, 75, 1, 2,
+            20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 217, 109, 41, 85, 10, 0, 0, 0, 10, 0, 0, 0, 5, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 45, 0, 0, 0, 97, 46, 108, 111, 103, 80, 75, 5, 6,
+            0, 0, 0, 0, 2, 0, 2, 0, 102, 0, 0, 0, 90, 0, 0, 0, 0, 0,
+        ];
+        fs::write(&zip_path, bytes).unwrap();
+        let outcome = resolve(&zip_path).expect("duplicate-name zip must not panic/fail hard");
+        // Extraction overwrites the same path; we should still get a single text log.
+        assert_eq!(outcome.targets.len(), 1);
+        assert!(outcome.targets[0].name.contains("a.log"));
+        if let Some(tmp) = outcome.temp_dir {
+            fs::remove_dir_all(tmp).ok();
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn soak_extract_zip_caps_entry_count_and_discards_bomb() {
         let dir = std::env::temp_dir().join(format!(
             "loglens-test-zipsoak-{}",
