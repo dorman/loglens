@@ -195,7 +195,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .map(|f| Line::from(format!(" {} ", f.name)))
         .collect();
     let tabs = Tabs::new(titles)
-        .block(theme::panel(" Files (Tab) ", false))
+        .block(theme::panel(" Files (Tab/]) ", false))
         .style(Style::default().fg(theme::TEXT_DIM))
         .select(app.current)
         .highlight_style(
@@ -895,7 +895,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
         Line::from("  g / G           jump to top / bottom"),
         Line::from("  n / N           next / previous match"),
-        Line::from("  Tab / Shift-Tab switch between open files"),
+        Line::from("  Tab / ]         next open file"),
+        Line::from("  Shift-Tab / [   previous open file"),
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
         Line::from(""),
