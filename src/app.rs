@@ -16,6 +16,9 @@ use crate::signatures::{self, Severity, Signature};
 const MAX_MATCHES_PER_LINE: usize = 256;
 const MAX_MATCHES_PER_FILE: usize = 100_000;
 const MAX_FINDINGS: usize = 10_000;
+/// Findings below this severity are recorded on the gutter only (if matched)
+/// and never enter the triage panel — keeps Low/Info noise from burning the cap.
+const MIN_FINDING_SEVERITY: Severity = Severity::Medium;
 const MAX_OPEN_FILES: usize = 500;
 /// A 50 MB file of 1-byte lines would otherwise allocate tens of millions of
 /// `String`s; cap line count so RAM stays bounded inside the byte budget.
@@ -903,7 +906,7 @@ impl App {
                     // Still record severity on the line even after the findings
                     // list is capped, so gutter markers remain useful.
                     best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
-                    if st.findings.len() < MAX_FINDINGS {
+                    if sig.severity >= MIN_FINDING_SEVERITY && st.findings.len() < MAX_FINDINGS {
                         st.findings.push(Finding {
                             file: st.file,
                             line: st.line,
@@ -954,6 +957,14 @@ impl App {
 
     pub fn cancel_scan(&mut self) {
         if self.scan.take().is_some() {
+            // Drop partial gutter markers so a cancelled scan doesn't leave the
+            // file looking half-triaged.
+            for f in &mut self.files {
+                f.scan_severity = vec![None; f.lines.len()];
+            }
+            self.findings.clear();
+            self.findings_sel = 0;
+            self.show_findings = false;
             self.status = Some("scan cancelled".into());
         }
     }
@@ -1068,7 +1079,14 @@ impl App {
             self.current = self.files.len().saturating_sub(1);
         }
         if self.files.is_empty() {
-            self.mode = Mode::Browser;
+            // Match cold-start: land on the branded welcome viewer (press `o`
+            // for the browser), not a surprise file-browser popup.
+            self.mode = Mode::Viewer;
+            self.filter_on = false;
+            self.search = None;
+            self.active_rule = None;
+            self.show_findings = false;
+            self.status = Some("all files closed — press o to open".into());
         }
     }
 
@@ -1259,9 +1277,39 @@ mod tests {
         assert!(app.scanning());
         // Advance a little so gutter markers may be partial, then cancel.
         app.scan_step(5);
+        assert!(
+            app.files
+                .iter()
+                .any(|f| f.scan_severity.iter().any(|s| s.is_some())),
+            "expected partial gutter markers before cancel"
+        );
         app.cancel_scan();
         assert!(!app.scanning());
         assert_eq!(app.status.as_deref(), Some("scan cancelled"));
+        assert!(
+            app.files
+                .iter()
+                .all(|f| f.scan_severity.iter().all(|s| s.is_none())),
+            "cancel must clear partial gutter markers"
+        );
+        assert!(app.findings.is_empty());
+        assert!(!app.show_findings);
+    }
+
+    #[test]
+    fn scan_findings_exclude_low_info_noise() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+        assert!(
+            app.findings
+                .iter()
+                .all(|f| app.signatures[f.sig].severity >= Severity::Medium),
+            "findings panel must not include Low/Info catch-alls"
+        );
+        let counts = app.severity_counts();
+        assert_eq!(counts[Severity::Info as usize], 0);
+        assert_eq!(counts[Severity::Low as usize], 0);
     }
 
     #[test]
@@ -1311,11 +1359,17 @@ mod tests {
     }
 
     #[test]
-    fn close_last_file_enters_browser() {
+    fn close_last_file_returns_to_welcome_viewer() {
         let mut app = app_with_paths(&["samples/network.log"]);
         app.close_current_file();
         assert!(!app.has_files());
-        assert_eq!(app.mode, Mode::Browser);
+        assert_eq!(app.mode, Mode::Viewer);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("press o to open")
+        );
     }
 
     #[test]
@@ -1476,5 +1530,86 @@ mod tests {
         assert_eq!(file.lines.len(), MAX_LINES_PER_FILE);
         assert!(file.truncated);
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn soak_large_bundle_open_and_scan() {
+        let dir = tmp_name("soak-bundle");
+        fs::create_dir_all(dir.join("svc")).unwrap();
+        // Hundreds of small logs with a mix of clean + notable lines.
+        for i in 0..350 {
+            let body = if i % 17 == 0 {
+                format!("INFO start\nERROR Certificate validation failed for host-{i}\nINFO done\n")
+            } else if i % 23 == 0 {
+                format!("WARN noise\nconnection refused to peer-{i}\nINFO ok\n")
+            } else {
+                format!("INFO heartbeat {i}\nDEBUG tick\n")
+            };
+            fs::write(dir.join("svc").join(format!("{i:04}.log")), body).unwrap();
+        }
+        // Binary decoy that must be skipped.
+        fs::write(dir.join("svc").join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+
+        let mut app = App::new(&[dir.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert!(
+            app.files.len() >= 300,
+            "expected a large open set, got {}",
+            app.files.len()
+        );
+        assert!(app.files.len() <= MAX_OPEN_FILES);
+        assert!(app.files.iter().all(|f| !f.name.contains("blob.bin")));
+
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+        assert!(
+            app.findings
+                .iter()
+                .all(|f| app.signatures[f.sig].severity >= Severity::Medium)
+        );
+        // Cap must hold even on a large corpus.
+        assert!(app.findings.len() <= MAX_FINDINGS);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn soak_hostile_zip_opens_safely() {
+        let dir = tmp_name("soak-zip");
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("bundle.zip");
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            for i in 0..80 {
+                zip.start_file(format!("n{i}/agent.log"), opts).unwrap();
+                zip.write_all(format!("ERROR Certificate validation failed node-{i}\n").as_bytes())
+                    .unwrap();
+            }
+            zip.start_file("../escape.log", opts).unwrap();
+            zip.write_all(b"nope\n").unwrap();
+            zip.start_file("noise.bin", opts).unwrap();
+            zip.write_all(&[0u8; 64]).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let mut app = App::new(&[zip_path.to_string_lossy().into()], Vec::new(), false).unwrap();
+        assert!(app.has_files());
+        assert!(app.files.len() >= 50);
+        assert!(app.files.iter().all(|f| !f.name.contains("..")));
+        assert!(app.files.iter().all(|f| !f.name.contains("noise.bin")));
+        run_scan_to_completion(&mut app);
+        assert!(
+            app.findings
+                .iter()
+                .any(|f| app.signatures[f.sig].title.contains("Certificate"))
+        );
+        // Dropping the app must clean temp extract dirs.
+        let temps: Vec<_> = app.temp_dirs.clone();
+        drop(app);
+        for t in temps {
+            assert!(!t.exists(), "temp extract dir should be removed on Drop");
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 }

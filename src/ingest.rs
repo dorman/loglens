@@ -457,4 +457,97 @@ mod tests {
         }
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn soak_extract_zip_caps_entry_count_and_discards_bomb() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-zipsoak-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("hostile.zip");
+
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            // Many small text logs — well under the entry cap, all collectible.
+            for i in 0..120 {
+                zip.start_file(format!("logs/{i:03}.log"), opts).unwrap();
+                zip.write_all(format!("line {i} connection refused\n").as_bytes())
+                    .unwrap();
+            }
+
+            // Path traversal + absolute-style name should stay contained.
+            zip.start_file("../../escape.log", opts).unwrap();
+            zip.write_all(b"should not escape\n").unwrap();
+
+            // Binary decoy — looks_like_text rejects NUL bytes so it never
+            // becomes a tab even though it lives inside the archive.
+            zip.start_file("logs/payload.bin", opts).unwrap();
+            zip.write_all(&[0u8; 4096]).unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        let outcome = extract_zip(&zip_path).unwrap();
+        assert!(
+            outcome.targets.len() >= 100,
+            "expected many collected logs, got {}",
+            outcome.targets.len()
+        );
+        assert!(
+            outcome.targets.len() <= MAX_FILES_PER_RESOLVE,
+            "resolve must honor file cap"
+        );
+        assert!(outcome.targets.iter().all(|t| !t.name.contains("..")));
+        assert!(
+            outcome
+                .targets
+                .iter()
+                .all(|t| !t.name.ends_with("payload.bin"))
+        );
+        assert!(!dir.join("escape.log").exists());
+        let temp = outcome.temp_dir.expect("temp dir");
+        fs::remove_dir_all(&temp).ok();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn soak_deep_nested_bundle_stops_at_depth_cap() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-deep-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        // Build a chain deeper than MAX_DIR_DEPTH with a log at the bottom.
+        let mut cur = dir.clone();
+        fs::create_dir_all(&cur).unwrap();
+        for i in 0..(MAX_DIR_DEPTH + 8) {
+            cur = cur.join(format!("d{i}"));
+            fs::create_dir_all(&cur).unwrap();
+        }
+        fs::write(cur.join("deep.log"), b"connection refused\n").unwrap();
+        // Also plant a reachable log near the surface.
+        fs::write(dir.join("top.log"), b"certificate validation failed\n").unwrap();
+
+        let targets = collect_from_dir(&dir, &dir);
+        assert!(
+            targets.iter().any(|t| t.name == "top.log"),
+            "shallow log must be collected"
+        );
+        assert!(
+            targets.iter().all(|t| !t.name.ends_with("deep.log")),
+            "log beyond MAX_DIR_DEPTH must be skipped: {:?}",
+            targets.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
 }

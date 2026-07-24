@@ -142,20 +142,9 @@ pub fn builtin() -> Vec<Signature> {
             "A permission or authorization check failed — may block the product from operating correctly.",
             r"(?i)(access denied|permission denied|unauthorized|0x80070005|e_accessdenied)",
         ),
-        (
-            Low,
-            "error",
-            "Generic error",
-            "A line logged at ERROR level — worth a look but not inherently suspicious.",
-            r"(?i)\b(error|failed|failure)\b",
-        ),
-        (
-            Info,
-            "warning",
-            "Warning",
-            "A line logged at WARN level — informational context.",
-            r"(?i)\bwarn(ing)?\b",
-        ),
+        // Deliberately omit catch-all "error" / "warn" signatures: they flood
+        // real logs, burn the findings cap, and bury Medium+ triage signals.
+        // Use keyword highlights (`a` / `-k ERROR,WARN`) for that volume instead.
     ];
 
     DEFS.iter()
@@ -267,6 +256,37 @@ mod tests {
         assert!(
             titles.is_empty(),
             "clean INFO startup line should not match: {titles:?}"
+        );
+    }
+
+    #[test]
+    fn catch_all_error_and_warn_are_not_scan_signatures() {
+        // Broad ERROR/WARN lines must not produce findings on their own —
+        // those belong in keyword highlights, not the triage panel.
+        let error_line = "2026-07-22 10:00:07 ERROR something went sideways in module X";
+        let warn_line = "2026-07-22 10:00:05 WARN  Real-time protection module took 3200ms";
+        assert!(
+            titles_matching(error_line).is_empty(),
+            "generic ERROR must not be a scan signature: {:?}",
+            titles_matching(error_line)
+        );
+        assert!(
+            titles_matching(warn_line).is_empty(),
+            "generic WARN must not be a scan signature: {:?}",
+            titles_matching(warn_line)
+        );
+        assert!(
+            !sigs()
+                .iter()
+                .any(|s| s.title == "Generic error" || s.title == "Warning")
+        );
+    }
+
+    #[test]
+    fn builtin_signatures_are_medium_or_higher() {
+        assert!(
+            sigs().iter().all(|s| s.severity >= Severity::Medium),
+            "scan signatures should stay at Medium+ to avoid findings flood"
         );
     }
 }
