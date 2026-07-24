@@ -11,6 +11,7 @@ use crate::browser::Browser;
 use crate::ingest::{self, MAX_LOG_BYTES};
 use crate::rules::{self, MAX_RULES, Rule};
 use crate::signatures::{self, Severity, Signature};
+use crate::theme::{Theme, ThemeId};
 
 /// Hard caps that keep hostile or pathological inputs from exhausting memory.
 const MAX_MATCHES_PER_LINE: usize = 256;
@@ -50,9 +51,12 @@ pub struct ScanState {
 
 /// Screen rectangles recorded during rendering so the mouse handler can
 /// hit-test clicks against what is actually on screen.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct Regions {
     pub tabs: Rect,
+    /// Exact hit boxes for each open-file tab (in screen coords), parallel to
+    /// `App::files`. Used for mouse tab switching.
+    pub tab_hits: Vec<Rect>,
     pub log: Rect,
     pub legend: Rect,
     /// The scrollbar track column (empty when the file fits on screen).
@@ -309,6 +313,8 @@ pub struct App {
     pub scrollbar_drag: bool,
     pub status: Option<String>,
     pub should_quit: bool,
+    /// Active UI palette (switch with `t` / `--theme`).
+    pub theme: Theme,
     /// Temp directories created while extracting zip bundles; removed on Drop.
     temp_dirs: Vec<PathBuf>,
 }
@@ -322,7 +328,17 @@ impl Drop for App {
 }
 
 impl App {
+    #[cfg(test)]
     pub fn new(inputs: &[String], rules: Vec<Rule>, ignore_case: bool) -> Result<Self> {
+        Self::new_with_theme(inputs, rules, ignore_case, ThemeId::Dark)
+    }
+
+    pub fn new_with_theme(
+        inputs: &[String],
+        rules: Vec<Rule>,
+        ignore_case: bool,
+        theme_id: ThemeId,
+    ) -> Result<Self> {
         let start_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let mut app = App {
             rules,
@@ -348,6 +364,7 @@ impl App {
             scrollbar_drag: false,
             status: None,
             should_quit: false,
+            theme: Theme::from_id(theme_id),
             temp_dirs: Vec::new(),
         };
 
@@ -507,7 +524,13 @@ impl App {
                     return;
                 }
                 let is_regex = kind == InputKind::Regex;
-                match rules::compile_rule(&text, is_regex, self.ignore_case, self.rules.len()) {
+                match rules::compile_rule(
+                    &text,
+                    is_regex,
+                    self.ignore_case,
+                    self.rules.len(),
+                    &self.theme,
+                ) {
                     Ok(rule) => {
                         self.rules.push(rule);
                         self.rescan_all();
@@ -534,7 +557,13 @@ impl App {
         let mut rebuilt = Vec::with_capacity(self.rules.len());
         let mut dropped = 0usize;
         for r in &self.rules {
-            match rules::compile_rule(&r.label, r.is_regex, self.ignore_case, rebuilt.len()) {
+            match rules::compile_rule(
+                &r.label,
+                r.is_regex,
+                self.ignore_case,
+                rebuilt.len(),
+                &self.theme,
+            ) {
                 Ok(rule) => rebuilt.push(rule),
                 Err(_) => dropped += 1,
             }
@@ -555,6 +584,16 @@ impl App {
         } else {
             format!("case-insensitive: {case}")
         });
+    }
+
+    /// Cycle dark → light → high-contrast and recolor highlight rules.
+    pub fn cycle_theme(&mut self) {
+        let next = self.theme.id.next();
+        self.theme = Theme::from_id(next);
+        for (i, rule) in self.rules.iter_mut().enumerate() {
+            rule.color = self.theme.rule_color(i);
+        }
+        self.status = Some(format!("theme: {}", self.theme.id.label()));
     }
 
     // --- Search & filter -------------------------------------------------
@@ -1054,6 +1093,13 @@ impl App {
         }
     }
 
+    /// Jump to an open file by tab index (mouse click on the tab bar).
+    pub fn select_file(&mut self, index: usize) {
+        if index < self.files.len() {
+            self.current = index;
+        }
+    }
+
     pub fn close_current_file(&mut self) {
         if self.files.is_empty() {
             return;
@@ -1374,7 +1420,7 @@ mod tests {
 
     #[test]
     fn keyword_and_search_filter_navigation() {
-        let rule = rules::compile_rule("ERROR", false, true, 0).unwrap();
+        let rule = rules::compile_rule("ERROR", false, true, 0, &Theme::dark()).unwrap();
         let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
         assert!(app.file().rule_counts[0] > 0);
 
@@ -1428,7 +1474,8 @@ mod tests {
         );
 
         for i in 0..MAX_RULES {
-            let rule = rules::compile_rule(&format!("k{i}"), false, false, i).unwrap();
+            let rule =
+                rules::compile_rule(&format!("k{i}"), false, false, i, &Theme::dark()).unwrap();
             app.rules.push(rule);
         }
         app.begin_input(InputKind::Keyword);
@@ -1445,7 +1492,7 @@ mod tests {
 
     #[test]
     fn remove_last_rule_clears_active_and_rescans() {
-        let rule = rules::compile_rule("WARN", false, true, 0).unwrap();
+        let rule = rules::compile_rule("WARN", false, true, 0, &Theme::dark()).unwrap();
         let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
         app.active_rule = Some(0);
         assert!(app.file().total_matches() > 0);
@@ -1469,7 +1516,7 @@ mod tests {
 
     #[test]
     fn highlight_only_filter_uses_match_lines() {
-        let rule = rules::compile_rule("WARN", false, true, 0).unwrap();
+        let rule = rules::compile_rule("WARN", false, true, 0, &Theme::dark()).unwrap();
         let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
         let expected = app.file().match_lines.clone();
         app.filter_on = true;
@@ -1482,7 +1529,7 @@ mod tests {
     fn zero_width_regex_does_not_explode_matches() {
         let path = tmp_name("zw");
         fs::write(&path, "aaaa\nbbbb\n").unwrap();
-        let rule = rules::compile_rule("a*", true, false, 0).unwrap();
+        let rule = rules::compile_rule("a*", true, false, 0, &Theme::dark()).unwrap();
         let file = LogFile::load(&path, "zw.log".into(), &[rule]).unwrap();
         let total: usize = file.matches.iter().map(|m| m.len()).sum();
         assert!(total <= MAX_MATCHES_PER_FILE);

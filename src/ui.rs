@@ -13,7 +13,7 @@ use regex::Regex;
 use crate::app::{App, InputKind, LogFile, Mode};
 use crate::rules::Rule;
 use crate::signatures::Severity;
-use crate::theme;
+use crate::theme::{self, Theme};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_findings(frame, app, area);
     }
     if app.show_help {
-        draw_help(frame, area);
+        draw_help(frame, app, area);
     }
     if app.scanning() {
         draw_scan_progress(frame, app, area);
@@ -36,12 +36,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let frac = app.scan_fraction().unwrap_or(0.0);
     let (processed, total, found, file_name) =
         app.scan_detail().unwrap_or((0, 0, 0, String::new()));
 
     let rect = centered_rect_lines(area, 56, 6);
-    let block = theme::panel(" Scanning for known-bad signatures… ", true);
+    let block = t.panel(" Scanning for known-bad signatures… ", true);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
@@ -57,7 +58,7 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
 
     let pct = (frac * 100.0).round() as u16;
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(theme::ACCENT).bg(theme::CURSOR_BG))
+        .gauge_style(Style::default().fg(t.accent).bg(t.cursor_bg))
         .ratio(frac.clamp(0.0, 1.0))
         .label(format!("{pct}%"));
     frame.render_widget(gauge, rows[0]);
@@ -65,19 +66,19 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
     let info = Line::from(vec![
         Span::styled(
             format!(" {processed}/{total} lines"),
-            Style::default().fg(theme::TEXT),
+            Style::default().fg(t.text),
         ),
-        Span::styled("   ·   ", dim()),
+        Span::styled("   ·   ", dim(t)),
         Span::styled(
             format!("{found} findings so far"),
-            Style::default().fg(theme::ACCENT),
+            Style::default().fg(t.accent),
         ),
     ]);
     frame.render_widget(Paragraph::new(info), rows[1]);
 
     let sub = Line::from(vec![
-        Span::styled(format!(" {file_name}"), dim()),
-        Span::styled("      Esc to cancel", dim()),
+        Span::styled(format!(" {file_name}"), dim(t)),
+        Span::styled("      Esc to cancel", dim(t)),
     ]);
     frame.render_widget(Paragraph::new(sub), rows[2]);
 }
@@ -138,6 +139,7 @@ fn draw_viewer(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut idx = 0;
     app.regions.tabs = Rect::default();
+    app.regions.tab_hits.clear();
     if show_tabs {
         app.regions.tabs = chunks[idx];
         draw_tabs(frame, app, chunks[idx]);
@@ -176,7 +178,7 @@ fn draw_viewer(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.has_files() {
         draw_log(frame, app, log_area);
     } else {
-        draw_welcome(frame, log_area);
+        draw_welcome(frame, &app.theme, log_area);
     }
 
     app.regions.legend = Rect::default();
@@ -188,23 +190,48 @@ fn draw_viewer(frame: &mut Frame, app: &mut App, area: Rect) {
     draw_status(frame, app, status_area);
 }
 
-fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect) {
     let titles: Vec<Line> = app
         .files
         .iter()
         .map(|f| Line::from(format!(" {} ", f.name)))
         .collect();
+    let t = &app.theme;
     let tabs = Tabs::new(titles)
-        .block(theme::panel(" Files (Tab/]) ", false))
-        .style(Style::default().fg(theme::TEXT_DIM))
+        .block(t.panel(" Files (Tab/]) ", false))
+        .style(Style::default().fg(t.text_dim))
         .select(app.current)
         .highlight_style(
             Style::default()
-                .fg(theme::MATCH_FG)
-                .bg(theme::ACCENT)
+                .fg(t.match_fg)
+                .bg(t.accent)
                 .add_modifier(Modifier::BOLD),
         );
     frame.render_widget(tabs, area);
+
+    // Hit boxes for mouse tab switching: inner area of the bordered panel.
+    app.regions.tab_hits.clear();
+    let inner_x = area.x.saturating_add(1);
+    let inner_y = area.y.saturating_add(1);
+    let inner_w = area.width.saturating_sub(2);
+    let inner_end = inner_x.saturating_add(inner_w);
+    let mut x = inner_x;
+    for f in &app.files {
+        let width = f.name.chars().count() as u16 + 2; // spaces around name
+        if x >= inner_end {
+            break;
+        }
+        let hit_w = width.min(inner_end.saturating_sub(x));
+        if hit_w > 0 {
+            app.regions.tab_hits.push(Rect {
+                x,
+                y: inner_y,
+                width: hit_w,
+                height: 1,
+            });
+        }
+        x = x.saturating_add(width).saturating_add(1); // +1 for divider
+    }
 }
 
 // Big "ANSI Shadow" banner (needs a wide-ish pane).
@@ -225,12 +252,12 @@ const LOGO_SMALL: &[&str] = &[
     r"|____\___/ \___|____|___|_|\_|___/",
 ];
 
-fn draw_welcome(frame: &mut Frame, area: Rect) {
+fn draw_welcome(frame: &mut Frame, theme: &Theme, area: Rect) {
     let key = |k: &'static str| {
         Span::styled(
             k,
             Style::default()
-                .fg(theme::ACCENT)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
     };
@@ -246,8 +273,8 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let last = logo.len().saturating_sub(1).max(1);
     for (i, l) in logo.iter().enumerate() {
-        let t = i as f64 / last as f64;
-        let color = theme::lerp_color(theme::LOGO_TOP, theme::LOGO_BOTTOM, t);
+        let frac = i as f64 / last as f64;
+        let color = theme::lerp_color(theme.logo_top, theme.logo_bottom, frac);
         lines.push(
             Line::from(Span::styled(
                 *l,
@@ -261,7 +288,7 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             concat!("Version ", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(theme.text_dim),
         ))
         .centered(),
     );
@@ -269,7 +296,7 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             "highlight what matters in your logs",
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(theme.text_dim),
         ))
         .centered(),
     );
@@ -305,10 +332,10 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     }
     padded.extend(lines);
 
-    let block = theme::panel(" loglens ", true);
+    let block = theme.panel(" loglens ", true);
     frame.render_widget(
         Paragraph::new(padded)
-            .style(Style::default().fg(theme::TEXT))
+            .style(Style::default().fg(theme.text))
             .block(block),
         area,
     );
@@ -320,6 +347,7 @@ fn render_line_spans<'a>(
     rule_spans: &[crate::app::MatchSpan],
     rules: &[Rule],
     search: Option<&Regex>,
+    theme: &Theme,
 ) -> Vec<Span<'a>> {
     let len = text.len();
     if len == 0 {
@@ -340,7 +368,10 @@ fn render_line_spans<'a>(
     };
 
     if rule_spans.is_empty() && search_ranges.is_empty() {
-        return vec![Span::raw(text)];
+        return vec![Span::styled(
+            text,
+            Style::default().fg(theme::level_fg(text, theme)),
+        )];
     }
 
     let mut points: BTreeSet<usize> = BTreeSet::new();
@@ -371,31 +402,35 @@ fn render_line_spans<'a>(
             spans.push(Span::styled(
                 &text[a..b],
                 Style::default()
-                    .fg(theme::MATCH_FG)
-                    .bg(theme::SEARCH_BG)
+                    .fg(theme.match_fg)
+                    .bg(theme.search_bg)
                     .add_modifier(Modifier::BOLD),
             ));
         } else if let Some(m) = rule_spans.iter().find(|m| m.start <= a && b <= m.end) {
-            let color = rules.get(m.rule).map(|r| r.color).unwrap_or(theme::ACCENT);
+            let color = rules.get(m.rule).map(|r| r.color).unwrap_or(theme.accent);
             spans.push(Span::styled(
                 &text[a..b],
                 Style::default()
-                    .fg(theme::MATCH_FG)
+                    .fg(theme.match_fg)
                     .bg(color)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            spans.push(Span::raw(&text[a..b]));
+            spans.push(Span::styled(
+                &text[a..b],
+                Style::default().fg(theme::level_fg(text, theme)),
+            ));
         }
     }
     spans
 }
 
 fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let file = app.file();
     let height = app.viewport_height.max(1);
     let search = app.search.as_ref().map(|s| &s.regex);
-    let block = theme::panel(&log_title(app, file), true);
+    let block = t.panel(&log_title(app, file), true);
 
     if file.view.is_empty() {
         let msg = vec![
@@ -405,23 +440,19 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw("  Press  "),
                 Span::styled(
                     "f",
-                    Style::default()
-                        .fg(theme::ACCENT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  to exit filter, or  "),
                 Span::styled(
                     "/",
-                    Style::default()
-                        .fg(theme::ACCENT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  to search."),
             ]),
         ];
         frame.render_widget(
             Paragraph::new(msg)
-                .style(Style::default().fg(theme::TEXT_DIM))
+                .style(Style::default().fg(t.text_dim))
                 .block(block),
             area,
         );
@@ -445,20 +476,21 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         }
         spans.push(Span::styled(
             format!("{:>width$} \u{2502} ", line_idx + 1, width = gutter_width),
-            Style::default().fg(theme::GUTTER),
+            Style::default().fg(t.gutter),
         ));
         spans.extend(render_line_spans(
             text,
             &file.matches[line_idx],
             &app.rules,
             search,
+            t,
         ));
 
         let mut line = Line::from(spans);
         if is_cursor {
             line = line.style(
                 Style::default()
-                    .bg(theme::CURSOR_BG)
+                    .bg(t.cursor_bg)
                     .add_modifier(Modifier::BOLD),
             );
         }
@@ -467,7 +499,7 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .style(Style::default().fg(theme::TEXT))
+            .style(Style::default().fg(t.text))
             .block(block),
         area,
     );
@@ -478,8 +510,8 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
-            .thumb_style(Style::default().fg(theme::ACCENT))
-            .track_style(Style::default().fg(theme::BORDER));
+            .thumb_style(Style::default().fg(t.accent))
+            .track_style(Style::default().fg(t.border));
         let sb_area = Rect {
             x: area.x,
             y: area.y + 1,
@@ -502,11 +534,12 @@ fn log_title(app: &App, file: &LogFile) -> String {
 }
 
 fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let mut items: Vec<ListItem> = Vec::new();
     if app.rules.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
             "  no highlights yet — press a",
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(t.text_dim),
         ))));
     } else {
         for (i, rule) in app.rules.iter().enumerate() {
@@ -519,50 +552,58 @@ fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
             let marker = if active { "\u{25B8} " } else { "  " };
             let kind = if rule.is_regex { "re" } else { "kw" };
             let label_style = if active {
-                Style::default()
-                    .fg(theme::TEXT)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme::TEXT)
+                Style::default().fg(t.text)
             };
             items.push(ListItem::new(Line::from(vec![
-                Span::styled(marker, Style::default().fg(theme::ACCENT)),
+                Span::styled(marker, Style::default().fg(t.accent)),
                 Span::styled("\u{2588}\u{2588} ", Style::default().fg(rule.color)),
                 Span::styled(format!("{} ", rule.label), label_style),
-                Span::styled(
-                    format!("{kind} {count}"),
-                    Style::default().fg(theme::TEXT_DIM),
-                ),
+                Span::styled(format!("{kind} {count}"), Style::default().fg(t.text_dim)),
             ])));
         }
     }
 
-    let block = theme::panel(" Highlights (click to jump) ", false);
+    let block = t.panel(" Highlights (click to jump) ", false);
     frame.render_widget(List::new(items).block(block), area);
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let base = Style::default().fg(theme::STATUS_FG).bg(theme::STATUS_BG);
+    let t = &app.theme;
+    let base = Style::default().fg(t.status_fg).bg(t.status_bg);
     let line = if let Some(msg) = &app.status {
         Line::from(vec![Span::styled(
             format!(" {msg}"),
-            base.fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            base.fg(t.accent).add_modifier(Modifier::BOLD),
         )])
     } else if app.has_files() {
         let file = app.file();
+        let pos = (file.view_pos + 1).min(file.view.len().max(1));
+        let shown = file.view.len();
+        let hl = file.total_matches();
+        let filter = if app.filter_on { " · filter" } else { "" };
+        let search = match &app.search {
+            Some(s) => {
+                let raw: String = s.raw.chars().take(20).collect();
+                let truncated = if s.raw.chars().count() > 20 {
+                    format!("{raw}…")
+                } else {
+                    raw
+                };
+                format!(" · /{truncated}")
+            }
+            None => String::new(),
+        };
+        let theme_label = t.id.label();
         Line::from(vec![Span::styled(
-            format!(
-                " {}/{} shown ({} total)  ·  {} hl  ·  S scan   / search   f filter   n/N next   o open   a add   ? help   q quit",
-                (file.view_pos + 1).min(file.view.len().max(1)),
-                file.view.len(),
-                file.lines.len(),
-                file.total_matches(),
-            ),
+            format!(" {pos}/{shown} · {hl} hl{filter}{search} · {theme_label}  ·  ? help"),
             base,
         )])
     } else {
+        let label = t.id.label();
         Line::from(vec![Span::styled(
-            " o open files   ·   a add highlight   ·   ? help   ·   q quit",
+            format!(" o open  ·  ? help  ·  q quit  ·  theme {label}"),
             base,
         )])
     };
@@ -570,6 +611,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
     let popup = centered_rect(74, 76, area);
     app.regions.browser = popup;
 
@@ -579,7 +621,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
         b.cwd.display(),
         b.marked.len()
     );
-    let block = theme::panel(&title, true);
+    let block = t.panel(&title, true);
     let inner = block.inner(popup);
 
     frame.render_widget(Clear, popup);
@@ -620,17 +662,19 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
             entry.name.clone()
         };
 
-        let mut style = Style::default().fg(theme::TEXT);
+        let mut style = Style::default().fg(t.text);
         if entry.is_dir {
-            style = style.fg(theme::ACCENT);
+            style = style.fg(t.accent);
         }
         if marked {
-            style = style.fg(theme::PALETTE[1]).add_modifier(Modifier::BOLD);
+            style = style
+                .fg(t.palette[1 % t.palette.len()])
+                .add_modifier(Modifier::BOLD);
         }
         if is_sel {
             style = Style::default()
-                .bg(theme::ACCENT)
-                .fg(theme::MATCH_FG)
+                .bg(t.accent)
+                .fg(t.match_fg)
                 .add_modifier(Modifier::BOLD);
         }
 
@@ -647,37 +691,36 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     let footer = if let Some(err) = &b.error {
         Line::from(Span::styled(
             err.clone(),
-            Style::default().fg(theme::PALETTE[0]),
+            Style::default().fg(t.palette[0 % t.palette.len()]),
         ))
     } else {
         Line::from(vec![
-            Span::styled("Enter", key()),
-            Span::styled(" open/enter  ", dim()),
-            Span::styled("Space", key()),
-            Span::styled(" mark  ", dim()),
-            Span::styled("o", key()),
-            Span::styled(" open marked  ", dim()),
-            Span::styled("O", key()),
-            Span::styled(" open folder/zip  ", dim()),
-            Span::styled("h", key()),
-            Span::styled(" up  ", dim()),
-            Span::styled("q", key()),
-            Span::styled(" close", dim()),
+            Span::styled("Enter", key(t)),
+            Span::styled(" open/enter  ", dim(t)),
+            Span::styled("Space", key(t)),
+            Span::styled(" mark  ", dim(t)),
+            Span::styled("o", key(t)),
+            Span::styled(" open marked  ", dim(t)),
+            Span::styled("O", key(t)),
+            Span::styled(" open folder/zip  ", dim(t)),
+            Span::styled("h", key(t)),
+            Span::styled(" up  ", dim(t)),
+            Span::styled("q", key(t)),
+            Span::styled(" close", dim(t)),
         ])
     };
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
-fn key() -> Style {
-    Style::default()
-        .fg(theme::ACCENT)
-        .add_modifier(Modifier::BOLD)
+fn key(t: &Theme) -> Style {
+    Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
 }
-fn dim() -> Style {
-    Style::default().fg(theme::TEXT_DIM)
+fn dim(t: &Theme) -> Style {
+    Style::default().fg(t.text_dim)
 }
 
 fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
     let popup = centered_rect(84, 84, area);
     app.regions.findings = popup;
 
@@ -691,7 +734,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
         c[1],
         c[0],
     );
-    let block = theme::panel(&title, true);
+    let block = t.panel(&title, true);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -737,20 +780,18 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
         let badge = Span::styled(
             format!(" {:<4} ", sig.severity.label()),
             Style::default()
-                .fg(theme::MATCH_FG)
+                .fg(t.match_fg)
                 .bg(sig.severity.color())
                 .add_modifier(Modifier::BOLD),
         );
         let title_style = if is_sel {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::TEXT)
+            Style::default().fg(t.text)
         };
         let loc = Span::styled(
             format!("  {}:{}", file_name, f.line + 1),
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(t.text_dim),
         );
         let mut line = Line::from(vec![
             badge,
@@ -759,7 +800,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
             loc,
         ]);
         if is_sel {
-            line = line.style(Style::default().bg(theme::CURSOR_BG));
+            line = line.style(Style::default().bg(t.cursor_bg));
         }
         items.push(ListItem::new(line));
     }
@@ -779,40 +820,38 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(
                     format!(" {} ", sig.severity.label()),
                     Style::default()
-                        .fg(theme::MATCH_FG)
+                        .fg(t.match_fg)
                         .bg(sig.severity.color())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(sig.category, Style::default().fg(theme::ACCENT)),
+                Span::styled(sig.category, Style::default().fg(t.accent)),
                 Span::styled(
                     format!("  {}", sig.title),
-                    Style::default()
-                        .fg(theme::TEXT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.text).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(Span::styled(
                 sig.explain.to_string(),
-                Style::default().fg(theme::TEXT_DIM),
+                Style::default().fg(t.text_dim),
             )),
             Line::from(Span::styled(
                 format!("→ {excerpt}"),
-                Style::default().fg(theme::TEXT),
+                Style::default().fg(t.text),
             )),
             Line::from(vec![
-                Span::styled("j/k", key()),
-                Span::styled(" move   ", dim()),
-                Span::styled("Enter/click", key()),
-                Span::styled(" jump to line   ", dim()),
-                Span::styled("q/Esc", key()),
-                Span::styled(" close", dim()),
+                Span::styled("j/k", key(t)),
+                Span::styled(" move   ", dim(t)),
+                Span::styled("Enter/click", key(t)),
+                Span::styled(" jump to line   ", dim(t)),
+                Span::styled("q/Esc", key(t)),
+                Span::styled(" close", dim(t)),
             ]),
         ]
     } else {
         vec![Line::from(Span::styled(
             "nothing notable found",
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(t.text_dim),
         ))]
     };
     frame.render_widget(
@@ -822,17 +861,18 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let prompt = match app.input_kind {
         InputKind::Keyword => "Add keyword highlight",
         InputKind::Regex => "Add regex highlight",
         InputKind::Search => "Search (case-insensitive)",
     };
     let rect = centered_rect_lines(area, 60, 3);
-    let block = theme::panel(&format!(" {prompt} — Enter to go, Esc to cancel "), true);
+    let block = t.panel(&format!(" {prompt} — Enter to go, Esc to cancel "), true);
     let line = Line::from(vec![
-        Span::styled("\u{203A} ", Style::default().fg(theme::ACCENT)),
-        Span::styled(app.input_buffer.clone(), Style::default().fg(theme::TEXT)),
-        Span::styled("\u{2588}", Style::default().fg(theme::ACCENT)),
+        Span::styled("\u{203A} ", Style::default().fg(t.accent)),
+        Span::styled(app.input_buffer.clone(), Style::default().fg(t.text)),
+        Span::styled("\u{2588}", Style::default().fg(t.accent)),
     ]);
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(line).block(block), rect);
@@ -872,22 +912,19 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let popup = centered_rect(66, 92, area);
     let head = |s: &'static str| {
         Line::from(Span::styled(
             s,
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         ))
     };
     let text = vec![
         Line::from(Span::styled(
             "loglens — keybindings",
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         head("Viewer"),
@@ -897,8 +934,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  n / N           next / previous match"),
         Line::from("  Tab / ]         next open file"),
         Line::from("  Shift-Tab / [   previous open file"),
+        Line::from("  click a tab     switch open file"),
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
+        Line::from("  t               cycle color theme"),
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
@@ -922,14 +961,16 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(
             "  ? close help    q quit",
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(t.text_dim),
         )),
     ];
-    let block = theme::panel(" Help (? to close) ", true).title_alignment(Alignment::Center);
+    let block = t
+        .panel(" Help (? to close) ", true)
+        .title_alignment(Alignment::Center);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(text)
-            .style(Style::default().fg(theme::TEXT))
+            .style(Style::default().fg(t.text))
             .block(block),
         popup,
     );
@@ -940,6 +981,7 @@ mod tests {
     use super::*;
     use crate::app::MatchSpan;
     use crate::rules;
+    use crate::theme::Theme;
 
     #[test]
     fn severity_bar_handles_zero_width_and_sparse_counts() {
@@ -968,29 +1010,31 @@ mod tests {
 
     #[test]
     fn render_line_spans_search_overrides_rule_color() {
-        let rule = rules::compile_rule("ERROR", false, false, 0).unwrap();
+        let theme = Theme::dark();
+        let rule = rules::compile_rule("ERROR", false, false, 0, &theme).unwrap();
         let spans = [MatchSpan {
             start: 0,
             end: 5,
             rule: 0,
         }];
         let search = Regex::new("ERR").unwrap();
-        let out = render_line_spans("ERROR happened", &spans, &[rule], Some(&search));
+        let out = render_line_spans("ERROR happened", &spans, &[rule], Some(&search), &theme);
         assert!(out.len() >= 2);
         // The search-styled prefix should use SEARCH_BG.
-        assert_eq!(out[0].style.bg, Some(theme::SEARCH_BG));
+        assert_eq!(out[0].style.bg, Some(theme.search_bg));
     }
 
     #[test]
     fn render_line_spans_ignores_non_char_boundary_cuts() {
-        let rule = rules::compile_rule("字", false, false, 0).unwrap();
+        let theme = Theme::dark();
+        let rule = rules::compile_rule("字", false, false, 0, &theme).unwrap();
         // Corrupt span pointing mid-codepoint must not panic.
         let spans = [MatchSpan {
             start: 1,
             end: 2,
             rule: 0,
         }];
-        let out = render_line_spans("字abc", &spans, &[rule], None);
+        let out = render_line_spans("字abc", &spans, &[rule], None, &theme);
         assert!(!out.is_empty());
         let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, "字abc");
@@ -998,8 +1042,16 @@ mod tests {
 
     #[test]
     fn render_line_spans_empty_line() {
-        let out = render_line_spans("", &[], &[], None);
+        let out = render_line_spans("", &[], &[], None, &Theme::dark());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].content.as_ref(), "");
+    }
+
+    #[test]
+    fn render_line_spans_applies_level_error_tint() {
+        let theme = Theme::dark();
+        let out = render_line_spans("2026 ERROR failed", &[], &[], None, &theme);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].style.fg, Some(theme.level_error));
     }
 }
