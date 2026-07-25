@@ -163,6 +163,8 @@ Navigation:
 | Key | Action |
 | --- | ------ |
 | `j` / `k`, `↓` / `↑` | one line down / up |
+| `←` / `→` | pan left / right by 8 columns (long lines that clip at the edge) |
+| `0` | reset horizontal scroll to column 1 |
 | `Ctrl-d` / `Ctrl-u`, `Space` / `PgDn`, `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
 | `:` | go to line number (1-based; clamps past the end) |
@@ -170,6 +172,7 @@ Navigation:
 | `M` | clear all bookmarks on the current file |
 | `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
 | `y` | copy the cursor line to the system clipboard (OSC-52) |
+| `Y` | copy the current file's path to the system clipboard (OSC-52) |
 | `Enter` | jump to the first match (highlights, or search results while searching) |
 | `n` / `N` | next / previous match (wraps; highlights, or search results while searching) |
 
@@ -178,8 +181,9 @@ jump, or drag the thumb.
 
 The status bar stays short on purpose: absolute line (`L42/1200`), highlight
 count, filter/search state, truncation hint, ignore-case (`ic` when on),
-bookmark count (when any), and cached finding count (`N fd` after a scan) —
-full keybindings live behind `?`. Press `:` to jump straight to a line number.
+bookmark count (when any), horizontal column (`col N` when panned), and
+cached finding count (`N fd` after a scan) — full keybindings live behind
+`?`. Press `:` to jump straight to a line number.
 
 Log lines are soft-tinted by level tokens even before you add highlights
 (`ERROR` / `ERR` / `FATAL` / `CRITICAL` / `CRIT`, `WARN` / `WARNING`,
@@ -271,9 +275,10 @@ Filter mode is the biggest time-saver in the tool:
 - With no search, `f` shows **only lines that hit one of your highlights**.
 
 Either way, original line numbers are preserved, so a 10,000-line log
-becomes the 40 lines worth reading without losing your place. Press `f`
-again, `c` (clears search and filter together), or `Esc` once search is
-cleared to restore the full view.
+becomes the 40 lines worth reading without losing your place. If `f` hides
+the line you were on, the status bar says so and the cursor moves to the
+nearest remaining match. Press `f` again, `c` (clears search and filter
+together), or `Esc` once search is cleared to restore the full view.
 
 Search matches render with a bright white highlight, layered on top of any
 keyword colors.
@@ -302,11 +307,12 @@ input prompt, never interpreted as keystrokes.
 
 Press `?` in the app for this list any time.
 
-**Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u`/`Space`/`PgDn`/`PgUp` page ·
-`g`/`G`/`Home`/`End` top/bottom · `:` go to line · `m` bookmark ·
-`M` clear bookmarks · `'`/`"` next/prev bookmark · `Enter` first match ·
-`n`/`N` next/prev match (wraps) · `Tab`/`]` next file · `Shift-Tab`/`[` prev
-file · `o` file browser · `w` close file · `y` copy cursor line · `q` quit
+**Viewer** — `j`/`k` scroll · `←`/`→` pan · `0` reset pan ·
+`Ctrl-d`/`Ctrl-u`/`Space`/`PgDn`/`PgUp` page · `g`/`G`/`Home`/`End`
+top/bottom · `:` go to line · `m` bookmark · `M` clear bookmarks ·
+`'`/`"` next/prev bookmark · `Enter` first match · `n`/`N` next/prev match
+(wraps) · `Tab`/`]` next file · `Shift-Tab`/`[` prev file · `o` file browser ·
+`w` close file · `y` copy cursor line · `Y` copy file path · `q` quit
 
 **Scan** — `S` scan · `s` reopen findings · `p`/`P` next/prev finding (wraps) ·
 `e` export markdown · in panel: `j`/`k` move, `Enter` jump, `e` export,

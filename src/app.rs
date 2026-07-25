@@ -112,6 +112,7 @@ pub struct Regions {
     pub findings_top: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MatchSpan {
     pub start: usize,
     pub end: usize,
@@ -120,6 +121,9 @@ pub struct MatchSpan {
 
 pub struct LogFile {
     pub name: String,
+    /// Filesystem path used to open this tab (canonical when available).
+    /// Kept for yank-path (`Y`) and future reopen/reload features.
+    pub path: PathBuf,
     pub lines: Vec<String>,
     /// Match spans per line, indexed the same as `lines`.
     pub matches: Vec<Vec<MatchSpan>>,
@@ -135,6 +139,9 @@ pub struct LogFile {
     pub view_pos: usize,
     /// Index into `view` of the first visible row.
     pub top: usize,
+    /// Horizontal scroll offset in Unicode scalar values (columns of text).
+    /// Long lines are clipped by the terminal; Left/Right pan the visible slice.
+    pub h_scroll: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
     /// Bookmarked absolute line indices (sorted, unique). Toggle with `m`.
@@ -167,8 +174,12 @@ impl LogFile {
         let (lines, truncated) = split_log_lines(&content);
 
         let line_count = lines.len();
+        // Prefer a canonical absolute path for yank/reload; fall back to the
+        // open path (e.g. if the file vanishes between open and canonicalize).
+        let stored_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let mut file = LogFile {
             name,
+            path: stored_path,
             lines,
             matches: Vec::new(),
             match_lines: Vec::new(),
@@ -176,6 +187,7 @@ impl LogFile {
             view: Vec::new(),
             view_pos: 0,
             top: 0,
+            h_scroll: 0,
             scan_severity: vec![None; line_count],
             bookmarks: Vec::new(),
             truncated,
@@ -768,13 +780,42 @@ impl App {
     }
 
     pub fn toggle_filter(&mut self) {
+        // Remember the absolute line under the cursor so we can tell the user
+        // when turning filter on drops that line out of the view.
+        let prior_line = if self.has_files() {
+            self.file().view.get(self.file().view_pos).copied()
+        } else {
+            None
+        };
+
         self.filter_on = !self.filter_on;
         self.rebuild_views();
         self.ensure_cursor_visible();
-        self.status = Some(format!(
-            "filter: {}",
-            if self.filter_on { "on" } else { "off" }
-        ));
+
+        self.status = Some(if !self.filter_on {
+            "filter: off".into()
+        } else if !self.has_files() {
+            "filter: on".into()
+        } else if self.file().view.is_empty() {
+            match prior_line {
+                Some(line) => format!("filter: on · no matches (was on L{})", line + 1),
+                None => "filter: on · no matches".into(),
+            }
+        } else if let Some(line) = prior_line {
+            if self.file().view.contains(&line) {
+                "filter: on".into()
+            } else {
+                let now = self
+                    .file()
+                    .view
+                    .get(self.file().view_pos)
+                    .map(|l| l + 1)
+                    .unwrap_or(1);
+                format!("filter: on · L{} hidden — now L{now}", line + 1)
+            }
+        } else {
+            "filter: on".into()
+        });
     }
 
     fn search_hits(&self) -> usize {
@@ -1081,6 +1122,27 @@ impl App {
 
     pub fn page_up(&mut self) {
         self.move_cursor(-(self.viewport_height.max(1) as isize));
+    }
+
+    /// Pan the log pane horizontally by `delta` columns (Unicode scalars).
+    /// Positive = right (reveal more of long lines); negative = left toward col 0.
+    pub fn scroll_horiz(&mut self, delta: isize) {
+        if !self.has_files() {
+            return;
+        }
+        let f = self.file_mut();
+        let next = (f.h_scroll as isize + delta).max(0) as usize;
+        // Soft cap so a held key cannot push the offset into absurd territory.
+        const MAX_H_SCROLL: usize = 10_000;
+        f.h_scroll = next.min(MAX_H_SCROLL);
+    }
+
+    /// Jump horizontal scroll back to column 0.
+    pub fn reset_h_scroll(&mut self) {
+        if !self.has_files() {
+            return;
+        }
+        self.file_mut().h_scroll = 0;
     }
 
     pub fn go_top(&mut self) {
@@ -1846,6 +1908,31 @@ impl App {
                     format!("copied line {line_no} (truncated)")
                 } else {
                     format!("copied line {line_no}")
+                });
+            }
+            Err(_) => {
+                self.status = Some("copy failed (terminal may block clipboard)".into());
+            }
+        }
+    }
+
+    /// Copy the current tab's filesystem path to the clipboard (OSC-52).
+    pub fn yank_current_path(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before copying".into());
+            return;
+        }
+        let path = self.file().path.display().to_string();
+        if path.is_empty() {
+            self.status = Some("nothing to copy".into());
+            return;
+        }
+        match crate::clipboard::copy_text(&path) {
+            Ok(outcome) => {
+                self.status = Some(if outcome.truncated {
+                    "copied path (truncated)".into()
+                } else {
+                    "copied path".into()
                 });
             }
             Err(_) => {
@@ -3273,5 +3360,110 @@ mod tests {
         }
         let _ = fs::remove_dir_all(&cfg_dir);
         let _ = fs::remove_dir_all(&browse);
+    }
+
+    #[test]
+    fn scroll_horiz_pans_and_clamps_at_zero() {
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        assert_eq!(app.file().h_scroll, 0);
+        app.scroll_horiz(-8);
+        assert_eq!(app.file().h_scroll, 0);
+        app.scroll_horiz(8);
+        assert_eq!(app.file().h_scroll, 8);
+        app.scroll_horiz(4);
+        assert_eq!(app.file().h_scroll, 12);
+        app.reset_h_scroll();
+        assert_eq!(app.file().h_scroll, 0);
+    }
+
+    #[test]
+    fn scroll_horiz_without_files_is_noop() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.scroll_horiz(8);
+        app.reset_h_scroll();
+        // No panic, no files to inspect.
+        assert!(!app.has_files());
+    }
+
+    #[test]
+    fn loaded_file_stores_path_for_yank() {
+        let app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        let path = &app.file().path;
+        assert!(
+            path.ends_with("sample.log"),
+            "expected path ending in sample.log, got {}",
+            path.display()
+        );
+        assert!(
+            path.is_absolute(),
+            "stored path should be absolute when possible"
+        );
+    }
+
+    #[test]
+    fn yank_path_without_files_sets_status() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.yank_current_path();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
+        );
+    }
+
+    #[test]
+    fn toggle_filter_reports_when_cursor_line_is_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        // set_search jumps to the first match — place the cursor on a non-match
+        // afterwards so turning filter on actually hides that line.
+        app.set_search("ERROR");
+        let non_error = app
+            .file()
+            .lines
+            .iter()
+            .position(|l| !l.to_lowercase().contains("error"))
+            .expect("sample.log should have a non-ERROR line");
+        app.file_mut().view_pos = non_error;
+        app.toggle_filter();
+        assert!(app.filter_on);
+        assert!(
+            !app.file().view.contains(&non_error),
+            "filtered view should exclude the prior cursor line"
+        );
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("hidden") && status.contains(&format!("L{}", non_error + 1)),
+            "status should flash that the cursor line was hidden: {status:?}"
+        );
+        assert!(
+            status.contains("now L"),
+            "status should name the new cursor line: {status:?}"
+        );
+
+        // Cursor already on a matching line → plain "filter: on".
+        app.toggle_filter(); // off
+        assert_eq!(app.status.as_deref(), Some("filter: off"));
+        let error_line = app
+            .file()
+            .lines
+            .iter()
+            .position(|l| l.contains("ERROR"))
+            .expect("sample.log should have an ERROR line");
+        app.file_mut().view_pos = error_line;
+        app.toggle_filter(); // on again
+        assert_eq!(app.status.as_deref(), Some("filter: on"));
+
+        // Empty match set names the vacated line.
+        app.toggle_filter(); // off
+        app.set_search("this-will-not-match-zzzz");
+        // set_search leaves the view unfiltered; park on absolute line 0.
+        app.file_mut().view_pos = 0;
+        app.toggle_filter();
+        assert!(app.file().view.is_empty());
+        assert_eq!(
+            app.status.as_deref(),
+            Some("filter: on · no matches (was on L1)")
+        );
     }
 }

@@ -303,6 +303,12 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char('j') | KeyCode::Down => app.move_cursor(1),
         KeyCode::Char('k') | KeyCode::Up => app.move_cursor(-1),
+        // Pan long lines horizontally (step of 8 columns). `0` resets to col 0.
+        // Left/Right are free in the viewer; the file browser reuses them for
+        // directory navigation instead.
+        KeyCode::Left => app.scroll_horiz(-8),
+        KeyCode::Right => app.scroll_horiz(8),
+        KeyCode::Char('0') => app.reset_h_scroll(),
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
         // Space mirrors less/more page-down; Shift-Space is not distinguished in
@@ -356,8 +362,9 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         // Import / manage files.
         KeyCode::Char('o') => app.open_browser(),
         KeyCode::Char('w') => app.close_current_file(),
-        // Copy the cursor line to the system clipboard (OSC-52).
+        // Copy the cursor line / current file path to the system clipboard (OSC-52).
         KeyCode::Char('y') => app.yank_current_line(),
+        KeyCode::Char('Y') => app.yank_current_path(),
         // Manage highlights.
         KeyCode::Char('a') => app.begin_input(InputKind::Keyword),
         KeyCode::Char('r') => app.begin_input(InputKind::Regex),
@@ -450,6 +457,32 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before copying")
         );
+    }
+
+    #[test]
+    fn viewer_shift_y_without_files_prompts_to_open() {
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('Y'), KeyModifiers::SHIFT);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
+        );
+    }
+
+    #[test]
+    fn viewer_arrows_pan_horizontally_and_zero_resets() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 8);
+        handle_viewer(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 16);
+        handle_viewer(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 8);
+        handle_viewer(&mut app, KeyCode::Char('0'), KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 0);
     }
 
     #[test]
