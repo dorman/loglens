@@ -742,6 +742,26 @@ impl App {
         }
     }
 
+    /// Clear search and filter together (`c`). One rebuild; status names what went away.
+    pub fn clear_search_and_filter(&mut self) {
+        let had_search = self.search.is_some();
+        let had_filter = self.filter_on;
+        if !had_search && !had_filter {
+            self.status = Some("nothing to clear".into());
+            return;
+        }
+        self.search = None;
+        self.filter_on = false;
+        self.rebuild_views();
+        self.ensure_cursor_visible();
+        self.status = Some(match (had_search, had_filter) {
+            (true, true) => "search and filter cleared".into(),
+            (true, false) => "search cleared".into(),
+            (false, true) => "filter cleared".into(),
+            (false, false) => unreachable!(),
+        });
+    }
+
     pub fn toggle_filter(&mut self) {
         self.filter_on = !self.filter_on;
         self.rebuild_views();
