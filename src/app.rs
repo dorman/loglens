@@ -1117,8 +1117,7 @@ impl App {
     /// Format findings as a short markdown triage summary and write to `path`.
     pub fn export_findings_to(&self, path: &Path) -> Result<usize> {
         let text = self.format_findings_markdown();
-        fs::write(path, text)
-            .with_context(|| format!("failed to write '{}'", path.display()))?;
+        fs::write(path, text).with_context(|| format!("failed to write '{}'", path.display()))?;
         Ok(self.findings.len())
     }
 
@@ -1162,10 +1161,7 @@ impl App {
                 sig.severity.label(),
                 sig.title
             ));
-            out.push_str(&format!(
-                "- **location:** `{file_name}:{}`\n",
-                f.line + 1
-            ));
+            out.push_str(&format!("- **location:** `{file_name}:{}`\n", f.line + 1));
             out.push_str(&format!("- **category:** {}\n", sig.category));
             out.push_str(&format!("- **why:** {}\n", sig.explain));
             if !excerpt.is_empty() {
@@ -1498,7 +1494,9 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let n = app.export_findings_to(&path).expect("export should succeed");
+        let n = app
+            .export_findings_to(&path)
+            .expect("export should succeed");
         assert_eq!(n, app.findings.len());
         let text = fs::read_to_string(&path).unwrap();
         fs::remove_file(&path).ok();

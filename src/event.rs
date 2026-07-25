@@ -433,10 +433,7 @@ mod tests {
         // `e` from the findings panel also exports (status reflects success).
         handle_viewer(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
         assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .contains("exported")
+            app.status.as_deref().unwrap_or("").contains("exported")
                 || app
                     .status
                     .as_deref()
