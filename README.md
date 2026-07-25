@@ -72,6 +72,8 @@ First moves once you're in:
 | Press | To |
 | ----- | -- |
 | `S`   | scan everything for known-bad signatures, ranked by severity |
+| `s`   | reopen the findings panel (no rescan) |
+| `e`   | export findings to `loglens-findings.md` |
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search |
 | `f`   | filter down to only matching lines |

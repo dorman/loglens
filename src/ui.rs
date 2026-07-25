@@ -596,8 +596,15 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             None => String::new(),
         };
         let theme_label = t.id.label();
+        let findings = if app.findings.is_empty() {
+            String::new()
+        } else {
+            format!(" · {} fd", app.findings.len())
+        };
         Line::from(vec![Span::styled(
-            format!(" {pos}/{shown} · {hl} hl{filter}{search} · {theme_label}  ·  ? help"),
+            format!(
+                " {pos}/{shown} · {hl} hl{filter}{search}{findings} · {theme_label}  ·  ? help"
+            ),
             base,
         )])
     } else {
@@ -843,7 +850,9 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled("j/k", key(t)),
                 Span::styled(" move   ", dim(t)),
                 Span::styled("Enter/click", key(t)),
-                Span::styled(" jump to line   ", dim(t)),
+                Span::styled(" jump   ", dim(t)),
+                Span::styled("e", key(t)),
+                Span::styled(" export   ", dim(t)),
                 Span::styled("q/Esc", key(t)),
                 Span::styled(" close", dim(t)),
             ]),
@@ -941,7 +950,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
-        Line::from("  (in panel)      j/k move · Enter/click jump · q close"),
+        Line::from("  s               reopen last findings panel (no rescan)"),
+        Line::from("  e               export findings to loglens-findings.md"),
+        Line::from("  (in panel)      j/k move · Enter jump · e export · q close"),
         Line::from(""),
         head("Search & filter"),
         Line::from("  /               search (n/N walk results, Esc clears)"),

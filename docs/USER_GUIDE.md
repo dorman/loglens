@@ -195,10 +195,14 @@ In the findings panel:
 - The **detail box** explains *why the selected finding matters* in plain
   English, with the matched log line.
 - `j`/`k` move · `Enter` (or click a row) jumps straight to that line ·
-  `q`/`Esc` closes.
+  `e` exports a markdown summary · `q`/`Esc` closes.
 
 After a scan, flagged lines keep a colored **severity dot** in the gutter, so
-trouble stays visible while you read normally.
+trouble stays visible while you read normally. Press **`s`** to reopen the
+findings panel without rescanning (status bar shows `N fd` while findings are
+cached). Press **`e`** anytime after a scan to write `loglens-findings.md` in
+the current directory — a short triage dump with severity, location, why it
+matters, and the matched line.
 
 Long scans (large bundles) show a live progress bar with a running findings
 count — press `Esc` to cancel. Cancelling clears any partial severity dots so
@@ -275,7 +279,8 @@ Press `?` in the app for this list any time.
 `n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
 `t` theme · `o` file browser · `w` close file · `q` quit
 
-**Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
+**Scan** — `S` scan · `s` reopen findings · `e` export markdown · in panel:
+`j`/`k` move, `Enter` jump, `e` export, `q`/`Esc` close
 
 **Search & filter** — `/` search · `f` filter · `Esc` clear search
 

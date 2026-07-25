@@ -253,10 +253,13 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
     if app.show_findings {
         match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => app.close_findings(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') | KeyCode::Char('s') => {
+                app.close_findings()
+            }
             KeyCode::Char('j') | KeyCode::Down => app.findings_move(1),
             KeyCode::Char('k') | KeyCode::Up => app.findings_move(-1),
             KeyCode::Enter => app.findings_jump(),
+            KeyCode::Char('e') => app.export_findings(),
             _ => {}
         }
         return;
@@ -285,8 +288,10 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('N') => app.prev_match(),
         KeyCode::Tab | KeyCode::Char(']') => app.next_file(),
         KeyCode::BackTab | KeyCode::Char('[') => app.prev_file(),
-        // Scan for known-bad signatures.
+        // Scan for known-bad signatures. Lowercase `s` reopens the last panel.
         KeyCode::Char('S') => app.begin_scan(),
+        KeyCode::Char('s') => app.toggle_findings(),
+        KeyCode::Char('e') => app.export_findings(),
         // Search & filter (require an open file — otherwise search_hits would
         // panic on the empty welcome screen).
         KeyCode::Char('/') => {
@@ -380,6 +385,68 @@ mod tests {
         app.mode = Mode::Viewer;
         handle_viewer(&mut app, KeyCode::Char('S'), KeyModifiers::NONE);
         assert!(app.scanning());
+    }
+
+    #[test]
+    fn findings_keys_toggle_and_export() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+        handle_viewer(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings to export")
+        );
+
+        app.begin_scan();
+        for _ in 0..10_000 {
+            if app.scan_step(10_000) {
+                break;
+            }
+        }
+        assert!(!app.findings.is_empty());
+        assert!(app.show_findings);
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(!app.show_findings);
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(app.show_findings);
+
+        let path = std::env::temp_dir().join(format!(
+            "loglens-findings-event-{}-{}.md",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        app.export_findings_to(&path).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(&path).ok();
+
+        // `e` from the findings panel also exports (status reflects success).
+        handle_viewer(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("exported")
+                || app
+                    .status
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("export failed"),
+            "unexpected status: {:?}",
+            app.status
+        );
+        // Clean up default cwd export if the keybinding wrote it.
+        let _ = std::fs::remove_file("loglens-findings.md");
     }
 
     #[test]

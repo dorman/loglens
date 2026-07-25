@@ -1081,6 +1081,101 @@ impl App {
         self.show_findings = false;
     }
 
+    /// Reopen (or close) the findings panel without rescanning.
+    /// `S` always starts a fresh scan; use this after closing the panel.
+    pub fn toggle_findings(&mut self) {
+        if self.findings.is_empty() {
+            self.status = Some("no findings — press S to scan".into());
+            return;
+        }
+        self.show_findings = !self.show_findings;
+        if self.show_findings {
+            self.status = Some(format!(
+                "findings ({}) — e export · Enter jump · q close",
+                self.findings.len()
+            ));
+        }
+    }
+
+    /// Write the current findings list to `loglens-findings.md` in the cwd.
+    pub fn export_findings(&mut self) {
+        if self.findings.is_empty() {
+            self.status = Some("no findings to export — press S to scan".into());
+            return;
+        }
+        let path = PathBuf::from("loglens-findings.md");
+        match self.export_findings_to(&path) {
+            Ok(n) => {
+                self.status = Some(format!("exported {n} findings → {}", path.display()));
+            }
+            Err(e) => {
+                self.status = Some(format!("export failed: {e}"));
+            }
+        }
+    }
+
+    /// Format findings as a short markdown triage summary and write to `path`.
+    pub fn export_findings_to(&self, path: &Path) -> Result<usize> {
+        let text = self.format_findings_markdown();
+        fs::write(path, text)
+            .with_context(|| format!("failed to write '{}'", path.display()))?;
+        Ok(self.findings.len())
+    }
+
+    fn format_findings_markdown(&self) -> String {
+        let c = self.severity_counts();
+        let mut out = String::new();
+        out.push_str("# loglens scan findings\n\n");
+        out.push_str(&format!(
+            "{} findings · {} crit · {} high · {} med · {} low · {} info\n\n",
+            self.findings.len(),
+            c[4],
+            c[3],
+            c[2],
+            c[1],
+            c[0]
+        ));
+        for (i, f) in self.findings.iter().enumerate() {
+            let sig = &self.signatures[f.sig];
+            let file_name = self
+                .files
+                .get(f.file)
+                .map(|lf| lf.name.as_str())
+                .unwrap_or("?");
+            let excerpt = self
+                .files
+                .get(f.file)
+                .and_then(|lf| lf.lines.get(f.line))
+                .map(|l| {
+                    let trimmed = l.trim();
+                    let truncated: String = trimmed.chars().take(240).collect();
+                    if trimmed.chars().count() > 240 {
+                        format!("{truncated}…")
+                    } else {
+                        truncated
+                    }
+                })
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "## {}. {} — {}\n",
+                i + 1,
+                sig.severity.label(),
+                sig.title
+            ));
+            out.push_str(&format!(
+                "- **location:** `{file_name}:{}`\n",
+                f.line + 1
+            ));
+            out.push_str(&format!("- **category:** {}\n", sig.category));
+            out.push_str(&format!("- **why:** {}\n", sig.explain));
+            if !excerpt.is_empty() {
+                out.push_str(&format!("- **line:** `{excerpt}`\n"));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn next_file(&mut self) {
         if self.files.len() > 1 {
             self.current = (self.current + 1) % self.files.len();
@@ -1356,6 +1451,65 @@ mod tests {
         let counts = app.severity_counts();
         assert_eq!(counts[Severity::Info as usize], 0);
         assert_eq!(counts[Severity::Low as usize], 0);
+    }
+
+    #[test]
+    fn toggle_findings_reopens_without_rescan() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.toggle_findings();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+
+        run_scan_to_completion(&mut app);
+        let n = app.findings.len();
+        assert!(n > 0);
+        assert!(app.show_findings);
+        app.close_findings();
+        assert!(!app.show_findings);
+        app.toggle_findings();
+        assert!(app.show_findings);
+        assert_eq!(app.findings.len(), n, "toggle must not clear findings");
+        app.toggle_findings();
+        assert!(!app.show_findings);
+        assert_eq!(app.findings.len(), n);
+    }
+
+    #[test]
+    fn export_findings_writes_markdown_summary() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.export_findings();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings to export")
+        );
+
+        run_scan_to_completion(&mut app);
+        let path = env::temp_dir().join(format!(
+            "loglens-findings-test-{}-{}.md",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let n = app.export_findings_to(&path).expect("export should succeed");
+        assert_eq!(n, app.findings.len());
+        let text = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).ok();
+        assert!(text.contains("# loglens scan findings"));
+        assert!(text.contains("sample.log"));
+        assert!(
+            text.contains("CRIT") || text.contains("HIGH") || text.contains("MED"),
+            "export should include severity labels"
+        );
+        assert!(text.contains("**why:**"));
+        assert!(text.contains("**location:**"));
     }
 
     #[test]
