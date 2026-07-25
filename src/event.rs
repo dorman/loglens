@@ -315,6 +315,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('M') => app.clear_bookmarks(),
         KeyCode::Char('\'') => app.next_bookmark(),
         KeyCode::Char('"') => app.prev_bookmark(),
+        // Enter resets to the first match; n/N walk forward/back (wrapping).
+        KeyCode::Enter => app.first_match(),
         KeyCode::Char('n') => app.next_match(),
         KeyCode::Char('N') => app.prev_match(),
         KeyCode::Tab | KeyCode::Char(']') => app.next_file(),
@@ -471,6 +473,27 @@ mod tests {
         assert_eq!(app.file().view_pos, start + 5);
         handle_viewer(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
         assert_eq!(app.file().view_pos, start + 10);
+    }
+
+    #[test]
+    fn viewer_enter_jumps_to_first_match() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        assert!(app.search.is_some());
+        app.go_bottom();
+        let away = app.file().view_pos;
+        handle_viewer(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(
+            app.file().view_pos < away,
+            "Enter should jump toward the first match from the bottom"
+        );
+        assert!(
+            app.status.as_deref().unwrap_or("").starts_with("match 1/"),
+            "Enter should report match 1/n: {:?}",
+            app.status
+        );
     }
 
     #[test]

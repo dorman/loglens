@@ -1199,6 +1199,13 @@ impl App {
         ));
     }
 
+    /// Jump to the first active match (search hits if searching, else highlight
+    /// hits). Bound to Enter in the viewer — handy after scrolling away from
+    /// the top hit. Reports `match 1/n · line L` like [`Self::next_match`].
+    pub fn first_match(&mut self) {
+        self.jump_match_to(0);
+    }
+
     /// Jump to the next active match (search hits if searching, else highlight
     /// hits). Wraps and reports `match i/n · line L` like bookmark jumps.
     pub fn next_match(&mut self) {
@@ -1215,6 +1222,37 @@ impl App {
             self.status = Some("open a file before jumping matches".into());
             return;
         }
+        let Some(hits) = self.active_match_positions() else {
+            return;
+        };
+        let cur = self.file().view_pos;
+        let n = hits.len() as isize;
+        let next_idx = if dir > 0 {
+            hits.iter().position(|&p| p > cur).unwrap_or(0)
+        } else {
+            hits.iter()
+                .rposition(|&p| p < cur)
+                .unwrap_or((n - 1) as usize)
+        };
+        self.apply_match_jump(&hits, next_idx);
+    }
+
+    /// Jump to an absolute hit index (`0` = first). Empty / no-file cases share
+    /// status messaging with [`Self::jump_match`].
+    fn jump_match_to(&mut self, idx: usize) {
+        if !self.has_files() {
+            self.status = Some("open a file before jumping matches".into());
+            return;
+        }
+        let Some(hits) = self.active_match_positions() else {
+            return;
+        };
+        self.apply_match_jump(&hits, idx.min(hits.len() - 1));
+    }
+
+    /// View positions of every active match, or `None` after setting an empty-
+    /// state status message.
+    fn active_match_positions(&mut self) -> Option<Vec<usize>> {
         let view = self.file().view.clone();
         let hits: Vec<usize> = view
             .iter()
@@ -1228,25 +1266,21 @@ impl App {
             } else {
                 "no highlight matches — press a to add, or / to search".into()
             });
-            return;
+            return None;
         }
-        let cur = self.file().view_pos;
-        let n = hits.len() as isize;
-        let next_idx = if dir > 0 {
-            hits.iter().position(|&p| p > cur).unwrap_or(0)
-        } else {
-            hits.iter()
-                .rposition(|&p| p < cur)
-                .unwrap_or((n - 1) as usize)
-        };
-        let pos = hits[next_idx];
+        Some(hits)
+    }
+
+    fn apply_match_jump(&mut self, hits: &[usize], idx: usize) {
+        let view = self.file().view.clone();
+        let pos = hits[idx];
         let line = view[pos];
         self.file_mut().view_pos = pos;
         self.ensure_cursor_visible();
         self.clamp_scroll();
         self.status = Some(format!(
             "match {}/{} · line {}",
-            next_idx + 1,
+            idx + 1,
             hits.len(),
             line + 1
         ));
@@ -2339,6 +2373,57 @@ mod tests {
         );
         app.prev_match();
         assert_eq!(app.file().view_pos, start);
+    }
+
+    #[test]
+    fn first_match_jumps_to_top_hit() {
+        let rule = rules::compile_rule("ERROR", false, true, 0, &Theme::dark()).unwrap();
+        let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
+        assert!(app.file().rule_counts[0] > 0);
+
+        app.go_bottom();
+        let away = app.file().view_pos;
+        app.first_match();
+        let first = app.file().view_pos;
+        assert!(
+            first < away,
+            "first_match should leave the bottom: {first} vs {away}"
+        );
+        assert!(
+            app.status.as_deref().unwrap_or("").starts_with("match 1/"),
+            "first_match should report match 1/n: {:?}",
+            app.status
+        );
+
+        // Idempotent: already on first hit still reports match 1/n.
+        app.first_match();
+        assert_eq!(app.file().view_pos, first);
+        assert!(
+            app.status.as_deref().unwrap_or("").starts_with("match 1/"),
+            "{:?}",
+            app.status
+        );
+
+        let mut bare = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        bare.first_match();
+        assert!(
+            bare.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no highlight matches"),
+            "{:?}",
+            bare.status
+        );
+
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        empty.first_match();
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping matches")
+        );
     }
 
     #[test]
