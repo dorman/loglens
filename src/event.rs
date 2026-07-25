@@ -259,10 +259,7 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if app.show_help {
         // Footer advertises q; treat it like ?/Esc so it closes the overlay
         // instead of being swallowed with no effect.
-        if matches!(
-            code,
-            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc
-        ) {
+        if matches!(code, KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc) {
             app.toggle_help();
         }
         return;
