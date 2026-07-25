@@ -402,6 +402,15 @@ fn h_scroll_byte_offset(text: &str, cols: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+/// Shift a half-open byte range left by `byte_off`, clipping at the cut.
+/// Returns `None` when the range ends entirely before the viewport.
+fn shift_range_left(start: usize, end: usize, byte_off: usize) -> Option<(usize, usize)> {
+    if end <= byte_off {
+        return None;
+    }
+    Some((start.saturating_sub(byte_off), end - byte_off))
+}
+
 /// Shift match spans left by `byte_off`, dropping anything that ends before the cut.
 fn shift_spans_left(spans: &[MatchSpan], byte_off: usize) -> Vec<MatchSpan> {
     if byte_off == 0 {
@@ -410,35 +419,23 @@ fn shift_spans_left(spans: &[MatchSpan], byte_off: usize) -> Vec<MatchSpan> {
     spans
         .iter()
         .filter_map(|s| {
-            if s.end <= byte_off {
-                return None;
-            }
+            let (start, end) = shift_range_left(s.start, s.end, byte_off)?;
             Some(MatchSpan {
-                start: s.start.saturating_sub(byte_off),
-                end: s.end - byte_off,
+                start,
+                end,
                 rule: s.rule,
             })
         })
         .collect()
 }
 
-/// Split one line into styled spans, layering search matches over rule matches.
-fn render_line_spans<'a>(
-    text: &'a str,
-    rule_spans: &[MatchSpan],
-    rules: &[Rule],
-    search: Option<&Regex>,
-    theme: &Theme,
-) -> Vec<Span<'a>> {
-    let len = text.len();
-    if len == 0 {
-        return vec![Span::raw("")];
-    }
+/// Cap ranges collected per painted line so a busy search over a long line
+/// cannot allocate unbounded style cut-points during render.
+const MAX_SEARCH_RANGES: usize = 256;
 
-    // Cap ranges collected per painted line so a busy search over a long line
-    // cannot allocate unbounded style cut-points during render.
-    const MAX_SEARCH_RANGES: usize = 256;
-    let search_ranges: Vec<(usize, usize)> = match search {
+/// Find search match byte ranges on the full (unpanned) line text.
+fn collect_search_ranges(text: &str, search: Option<&Regex>) -> Vec<(usize, usize)> {
+    match search {
         Some(re) => re
             .find_iter(text)
             .filter(|m| m.start() != m.end())
@@ -446,7 +443,38 @@ fn render_line_spans<'a>(
             .map(|m| (m.start(), m.end()))
             .collect(),
         None => Vec::new(),
-    };
+    }
+}
+
+/// Shift search ranges left by `byte_off` so partial matches that began before
+/// the pan cut still highlight the visible remainder.
+fn shift_search_ranges(ranges: &[(usize, usize)], byte_off: usize) -> Vec<(usize, usize)> {
+    if byte_off == 0 {
+        return ranges.to_vec();
+    }
+    ranges
+        .iter()
+        .filter_map(|&(s, e)| shift_range_left(s, e, byte_off))
+        .collect()
+}
+
+/// Split one line into styled spans, layering search matches over rule matches.
+///
+/// `text` is the visible (possibly h-scrolled) slice. `rule_spans` and
+/// `search_ranges` must already be shifted into that slice's coordinate space
+/// (see `shift_spans_left` / `shift_search_ranges`) so matches that start off
+/// the left edge still paint their visible tail.
+fn render_line_spans<'a>(
+    text: &'a str,
+    rule_spans: &[MatchSpan],
+    rules: &[Rule],
+    search_ranges: &[(usize, usize)],
+    theme: &Theme,
+) -> Vec<Span<'a>> {
+    let len = text.len();
+    if len == 0 {
+        return vec![Span::raw("")];
+    }
 
     if rule_spans.is_empty() && search_ranges.is_empty() {
         return vec![Span::styled(
@@ -462,9 +490,9 @@ fn render_line_spans<'a>(
         points.insert(s.start);
         points.insert(s.end);
     }
-    for (s, e) in &search_ranges {
-        points.insert(*s);
-        points.insert(*e);
+    for &(s, e) in search_ranges {
+        points.insert(s);
+        points.insert(e);
     }
 
     // Clamp/filter cut points to valid char boundaries within the line so a
@@ -551,6 +579,9 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         let byte_off = h_scroll_byte_offset(full, h_scroll);
         let text = &full[byte_off..];
         let shifted = shift_spans_left(&file.matches[line_idx], byte_off);
+        // Search on the full line, then shift — same as rule spans — so a match
+        // that starts left of the pan cut still highlights its visible tail.
+        let search_shifted = shift_search_ranges(&collect_search_ranges(full, search), byte_off);
         let is_cursor = vp == file.view_pos;
 
         let mut spans = Vec::new();
@@ -572,7 +603,13 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         if h_scroll > 0 {
             spans.push(Span::styled("‹", Style::default().fg(t.text_dim)));
         }
-        spans.extend(render_line_spans(text, &shifted, &app.rules, search, t));
+        spans.extend(render_line_spans(
+            text,
+            &shifted,
+            &app.rules,
+            &search_shifted,
+            t,
+        ));
 
         let mut line = Line::from(spans);
         if is_cursor {
@@ -1195,10 +1232,40 @@ mod tests {
             rule: 0,
         }];
         let search = Regex::new("ERR").unwrap();
-        let out = render_line_spans("ERROR happened", &spans, &[rule], Some(&search), &theme);
+        let ranges = collect_search_ranges("ERROR happened", Some(&search));
+        let out = render_line_spans("ERROR happened", &spans, &[rule], &ranges, &theme);
         assert!(out.len() >= 2);
         // The search-styled prefix should use SEARCH_BG.
         assert_eq!(out[0].style.bg, Some(theme.search_bg));
+    }
+
+    #[test]
+    fn search_highlight_survives_horizontal_pan() {
+        let theme = Theme::dark();
+        // Full line; search hits "ERROR" at bytes 7..12.
+        let full = "prefix ERROR tail";
+        let search = Regex::new("ERROR").unwrap();
+        let ranges = collect_search_ranges(full, Some(&search));
+        assert_eq!(ranges, vec![(7, 12)]);
+
+        // Pan so the cut lands mid-match ("ROR tail" visible).
+        let byte_off = h_scroll_byte_offset(full, 9); // past "prefix ER"
+        assert_eq!(&full[byte_off..], "ROR tail");
+        let shifted = shift_search_ranges(&ranges, byte_off);
+        assert_eq!(shifted, vec![(0, 3)]); // "ROR"
+
+        let out = render_line_spans(&full[byte_off..], &[], &[], &shifted, &theme);
+        assert_eq!(out[0].content.as_ref(), "ROR");
+        assert_eq!(out[0].style.bg, Some(theme.search_bg));
+        let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "ROR tail");
+    }
+
+    #[test]
+    fn shift_search_ranges_drops_fully_left_of_cut() {
+        // (0,3) dropped; (5,8) ends at cut → dropped; (10,12) → (2,4)
+        let shifted = shift_search_ranges(&[(0, 3), (5, 8), (10, 12)], 8);
+        assert_eq!(shifted, vec![(2, 4)]);
     }
 
     #[test]
@@ -1211,7 +1278,7 @@ mod tests {
             end: 2,
             rule: 0,
         }];
-        let out = render_line_spans("字abc", &spans, &[rule], None, &theme);
+        let out = render_line_spans("字abc", &spans, &[rule], &[], &theme);
         assert!(!out.is_empty());
         let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, "字abc");
@@ -1219,7 +1286,7 @@ mod tests {
 
     #[test]
     fn render_line_spans_empty_line() {
-        let out = render_line_spans("", &[], &[], None, &Theme::dark());
+        let out = render_line_spans("", &[], &[], &[], &Theme::dark());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].content.as_ref(), "");
     }
@@ -1227,7 +1294,7 @@ mod tests {
     #[test]
     fn render_line_spans_applies_level_error_tint() {
         let theme = Theme::dark();
-        let out = render_line_spans("2026 ERROR failed", &[], &[], None, &theme);
+        let out = render_line_spans("2026 ERROR failed", &[], &[], &[], &theme);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].style.fg, Some(theme.level_error));
     }
@@ -1244,7 +1311,7 @@ mod tests {
             end: 5,
             rule: 0,
         }];
-        let out = render_line_spans(text, &spans, &[rule], None, &theme);
+        let out = render_line_spans(text, &spans, &[rule], &[], &theme);
         let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, text);
         assert!(!joined.contains('\u{1b}'));
