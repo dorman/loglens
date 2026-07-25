@@ -32,12 +32,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let theme = theme::Theme::dark();
     // `-i` always enables for this session; otherwise honour the saved pref
-    // written when the user presses `i` in the TUI. `l` persists show_legend.
+    // written when the user presses `i` in the TUI. `l` persists show_legend;
+    // browsing with `o` persists the last browser directory.
     let prefs = config::load();
     let ignore_case = cli.ignore_case || prefs.ignore_case;
     let rules = rules::build_rules(&cli, &theme, ignore_case)?;
     let mut app = App::new(&cli.files, rules, ignore_case)?;
     app.show_legend = prefs.show_legend;
+    app.restore_browser_cwd(prefs.browser_cwd);
 
     // ratatui::init() panics when stdout is not a TTY; fail with a clear message
     // instead so CI / pipes / non-interactive shells get a usable exit status.

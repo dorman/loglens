@@ -526,6 +526,7 @@ impl App {
             self.status = Some("nothing selected (Space to mark, O to open a folder/zip)".into());
             return;
         }
+        self.remember_browser_cwd();
         self.browser.marked.clear();
         self.open_resolved(&paths);
     }
@@ -537,6 +538,7 @@ impl App {
             Some(e) if e.is_dir || ingest::is_zip(&e.path) => e.path.clone(),
             _ => self.browser.cwd.clone(),
         };
+        self.remember_browser_cwd();
         self.open_resolved(&[path]);
     }
 
@@ -1726,9 +1728,30 @@ impl App {
     }
 
     pub fn close_browser(&mut self) {
+        self.remember_browser_cwd();
         if self.has_files() {
             self.mode = Mode::Viewer;
         }
+    }
+
+    /// Re-open the file browser at a previously saved directory when it still
+    /// exists; otherwise leave the current (usually process cwd) location.
+    pub fn restore_browser_cwd(&mut self, saved: Option<PathBuf>) {
+        let Some(dir) = saved else {
+            return;
+        };
+        if dir.is_dir() {
+            self.browser = Browser::new(dir);
+        }
+    }
+
+    /// Persist the browser's current working directory for the next launch.
+    pub fn remember_browser_cwd(&self) {
+        let _ = crate::config::save(&crate::config::Config {
+            ignore_case: self.ignore_case,
+            show_legend: self.show_legend,
+            browser_cwd: Some(self.browser.cwd.clone()),
+        });
     }
 
     pub fn toggle_legend(&mut self) {
@@ -1743,6 +1766,7 @@ impl App {
         match crate::config::save(&crate::config::Config {
             ignore_case: self.ignore_case,
             show_legend: self.show_legend,
+            browser_cwd: Some(self.browser.cwd.clone()),
         }) {
             Ok(()) => " · saved".to_string(),
             Err(_) => " · could not save pref".to_string(),
@@ -3102,5 +3126,46 @@ mod tests {
             std::env::remove_var("LOGLENS_CONFIG_DIR");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn browser_cwd_persists_and_restores() {
+        let cfg_dir = tmp_name("browser-cwd-pref");
+        let browse = tmp_name("browser-cwd-target");
+        fs::create_dir_all(&cfg_dir).unwrap();
+        fs::create_dir_all(&browse).unwrap();
+        // SAFETY: test-only env override; cleaned up before return.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &cfg_dir);
+        }
+
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.browser = Browser::new(browse.clone());
+        app.remember_browser_cwd();
+
+        let loaded = crate::config::load();
+        assert_eq!(loaded.browser_cwd.as_deref(), Some(browse.as_path()));
+
+        // Fresh app starts at process cwd; restore should jump back.
+        let mut app2 = App::new(&[], Vec::new(), false).unwrap();
+        assert_ne!(app2.browser.cwd, browse);
+        app2.restore_browser_cwd(loaded.browser_cwd);
+        assert_eq!(app2.browser.cwd, browse);
+
+        // Missing/invalid path is ignored.
+        app2.restore_browser_cwd(Some(cfg_dir.join("does-not-exist")));
+        assert_eq!(app2.browser.cwd, browse);
+
+        // Pref toggles must keep browser_cwd.
+        app2.toggle_legend();
+        let again = crate::config::load();
+        assert_eq!(again.browser_cwd.as_deref(), Some(browse.as_path()));
+        assert!(!again.show_legend);
+
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&cfg_dir);
+        let _ = fs::remove_dir_all(&browse);
     }
 }
