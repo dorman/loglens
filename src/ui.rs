@@ -469,14 +469,22 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         let is_cursor = vp == file.view_pos;
 
         let mut spans = Vec::new();
-        // Severity dot from the last scan (blank until scanned).
+        let bookmarked = file.bookmarks.binary_search(&line_idx).is_ok();
+        // Severity dot from the last scan; bookmark ◆ when unmarked by scan.
         match file.scan_severity.get(line_idx).copied().flatten() {
             Some(sev) => spans.push(Span::styled("\u{25CF} ", Style::default().fg(sev.color()))),
+            None if bookmarked => {
+                spans.push(Span::styled(
+                    "\u{25C6} ",
+                    Style::default().fg(t.accent),
+                ));
+            }
             None => spans.push(Span::raw("  ")),
         }
+        let gutter_fg = if bookmarked { t.accent } else { t.gutter };
         spans.push(Span::styled(
             format!("{:>width$} \u{2502} ", line_idx + 1, width = gutter_width),
-            Style::default().fg(t.gutter),
+            Style::default().fg(gutter_fg),
         ));
         spans.extend(render_line_spans(
             text,
@@ -596,8 +604,16 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             None => String::new(),
         };
         let theme_label = t.id.label();
+        let bm = file.bookmarks.len();
+        let bookmarks = if bm > 0 {
+            format!(" · {bm} bm")
+        } else {
+            String::new()
+        };
         Line::from(vec![Span::styled(
-            format!(" {pos}/{shown} · {hl} hl{filter}{search} · {theme_label}  ·  ? help"),
+            format!(
+                " {pos}/{shown} · {hl} hl{filter}{search}{bookmarks} · {theme_label}  ·  ? help"
+            ),
             base,
         )])
     } else {
@@ -931,6 +947,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
         Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
         Line::from("  g / G           jump to top / bottom"),
+        Line::from("  m               toggle bookmark on current line"),
+        Line::from("  ' / \"           next / previous bookmark"),
         Line::from("  n / N           next / previous match"),
         Line::from("  Tab / ]         next open file"),
         Line::from("  Shift-Tab / [   previous open file"),

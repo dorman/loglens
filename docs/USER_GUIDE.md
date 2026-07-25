@@ -148,7 +148,8 @@ You can also click an entry to select it, and wheel-scroll the list.
 
 The main screen shows the current log with line numbers, your highlights
 colored inline, and (after a scan) a severity dot in the gutter next to
-flagged lines.
+flagged lines. Bookmarked lines show a diamond (`◆`) in the gutter (and keep
+an accent-tinted line number even when a severity dot is also present).
 
 Navigation:
 
@@ -157,15 +158,17 @@ Navigation:
 | `j` / `k`, `↓` / `↑` | one line down / up |
 | `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
+| `m` | toggle a bookmark on the current line |
+| `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
 | `n` / `N` | next / previous match (highlights, or search results while searching) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
 The status bar stays short on purpose: position, highlight count, filter/search
-state, and the active theme — full keybindings live behind `?`. Log lines are
-soft-tinted by level (`ERROR` / `WARN` / `INFO` / `DEBUG`) even before you add
-highlights, so severity stands out while scrolling.
+state, bookmark count (when any), and the active theme — full keybindings live
+behind `?`. Log lines are soft-tinted by level (`ERROR` / `WARN` / `INFO` /
+`DEBUG`) even before you add highlights, so severity stands out while scrolling.
 
 Themes: press **`t`** to cycle `dark` → `light` → `hc` (high-contrast), or start
 with `--theme light` / `--theme hc`. Highlight rule colors follow the theme.
@@ -272,8 +275,9 @@ input prompt, never interpreted as keystrokes.
 Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`t` theme · `o` file browser · `w` close file · `q` quit
+`m` bookmark · `'`/`"` next/prev bookmark · `n`/`N` next/prev match ·
+`Tab`/`]` next file · `Shift-Tab`/`[` prev file · `t` theme · `o` file browser ·
+`w` close file · `q` quit
 
 **Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
 

@@ -75,6 +75,7 @@ First moves once you're in:
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search |
 | `f`   | filter down to only matching lines |
+| `m`   | bookmark the current line (`'` / `"` jump between marks) |
 | `?`   | full keybinding help |
 | `q`   | quit |
 

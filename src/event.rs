@@ -281,6 +281,9 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::PageUp => app.page_up(),
         KeyCode::Char('g') | KeyCode::Home => app.go_top(),
         KeyCode::Char('G') | KeyCode::End => app.go_bottom(),
+        KeyCode::Char('m') => app.toggle_bookmark(),
+        KeyCode::Char('\'') => app.next_bookmark(),
+        KeyCode::Char('"') => app.prev_bookmark(),
         KeyCode::Char('n') => app.next_match(),
         KeyCode::Char('N') => app.prev_match(),
         KeyCode::Tab | KeyCode::Char(']') => app.next_file(),
@@ -511,5 +514,46 @@ mod tests {
         assert!(!app.should_quit);
         handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn bookmark_keys_toggle_and_jump() {
+        let mut app = app_with_sample();
+        assert!(app.file().lines.len() >= 3);
+        app.file_mut().view_pos = 0;
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![0]);
+        app.move_cursor(2);
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![0, 2]);
+        handle_viewer(&mut app, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 0);
+        handle_viewer(&mut app, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 2);
+        handle_viewer(&mut app, KeyCode::Char('"'), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 0);
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![2]);
+    }
+
+    #[test]
+    fn bookmark_requires_open_file() {
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before bookmarking")
+        );
+        handle_viewer(&mut empty, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping bookmarks")
+        );
     }
 }

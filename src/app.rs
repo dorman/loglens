@@ -30,6 +30,8 @@ const MAX_LINE_BYTES: usize = 32 * 1024;
 const MAX_TOTAL_LINES: usize = 1_000_000;
 /// Max characters accepted in the keyword / regex / search prompt (incl. paste).
 pub const MAX_INPUT_LEN: usize = 4_096;
+/// Soft cap on bookmarks per open file (toggle fails past this).
+const MAX_BOOKMARKS: usize = 64;
 
 /// A single scan hit: signature `sig` matched line `line` of file `file`.
 #[derive(Clone, Copy)]
@@ -100,6 +102,8 @@ pub struct LogFile {
     pub top: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
+    /// Bookmarked absolute line indices (sorted, unique). Toggle with `m`.
+    pub bookmarks: Vec<usize>,
     /// True if the file was truncated (too many lines and/or overlong lines).
     pub truncated: bool,
 }
@@ -138,6 +142,7 @@ impl LogFile {
             view_pos: 0,
             top: 0,
             scan_severity: vec![None; line_count],
+            bookmarks: Vec::new(),
             truncated,
         };
         file.rescan(rules);
@@ -772,6 +777,87 @@ impl App {
         f.view_pos = f.view.len().saturating_sub(1);
         self.ensure_cursor_visible();
         self.clamp_scroll();
+    }
+
+    /// Toggle a bookmark on the cursor's absolute line.
+    pub fn toggle_bookmark(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before bookmarking".into());
+            return;
+        }
+        let f = self.file_mut();
+        let Some(&line) = f.view.get(f.view_pos) else {
+            return;
+        };
+        match f.bookmarks.binary_search(&line) {
+            Ok(idx) => {
+                f.bookmarks.remove(idx);
+                let left = f.bookmarks.len();
+                self.status = Some(if left == 0 {
+                    format!("cleared bookmark on line {}", line + 1)
+                } else {
+                    format!("cleared bookmark on line {} ({left} left)", line + 1)
+                });
+            }
+            Err(idx) => {
+                if f.bookmarks.len() >= MAX_BOOKMARKS {
+                    self.status = Some(format!("bookmark limit reached ({MAX_BOOKMARKS})"));
+                    return;
+                }
+                f.bookmarks.insert(idx, line);
+                let n = f.bookmarks.len();
+                self.status = Some(format!("bookmarked line {} ({n})", line + 1));
+            }
+        }
+    }
+
+    /// Jump to the next bookmarked line (wraps). Clears filter if needed.
+    pub fn next_bookmark(&mut self) {
+        self.jump_bookmark(1);
+    }
+
+    /// Jump to the previous bookmarked line (wraps). Clears filter if needed.
+    pub fn prev_bookmark(&mut self) {
+        self.jump_bookmark(-1);
+    }
+
+    fn jump_bookmark(&mut self, dir: isize) {
+        if !self.has_files() {
+            self.status = Some("open a file before jumping bookmarks".into());
+            return;
+        }
+        if self.file().bookmarks.is_empty() {
+            self.status = Some("no bookmarks — press m to mark a line".into());
+            return;
+        }
+        let file_idx = self.current;
+        let marks = self.file().bookmarks.clone();
+        let cur_line = self
+            .file()
+            .view
+            .get(self.file().view_pos)
+            .copied()
+            .unwrap_or(0);
+        let n = marks.len() as isize;
+        let next = if dir > 0 {
+            marks
+                .iter()
+                .position(|&l| l > cur_line)
+                .unwrap_or(0)
+        } else {
+            marks
+                .iter()
+                .rposition(|&l| l < cur_line)
+                .unwrap_or((n - 1) as usize)
+        };
+        let line = marks[next];
+        self.jump_to_line(file_idx, line);
+        self.status = Some(format!(
+            "bookmark {}/{} · line {}",
+            next + 1,
+            marks.len(),
+            line + 1
+        ));
     }
 
     pub fn next_match(&mut self) {
@@ -1658,5 +1744,48 @@ mod tests {
             assert!(!t.exists(), "temp extract dir should be removed on Drop");
         }
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn toggle_bookmark_and_jump_wraps() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        assert!(app.file().lines.len() >= 4);
+        app.file_mut().view_pos = 1;
+        app.toggle_bookmark();
+        app.file_mut().view_pos = 3;
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks, vec![1, 3]);
+
+        // From line 3, next wraps to the first mark (line 1).
+        app.next_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 1);
+        app.next_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 3);
+
+        // Prev wraps the other way.
+        app.prev_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 1);
+        app.prev_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 3);
+
+        // Toggle clears.
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks, vec![1]);
+    }
+
+    #[test]
+    fn next_bookmark_defeats_filter_when_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.file_mut().view_pos = 0;
+        app.toggle_bookmark();
+        let marked = app.file().bookmarks[0];
+        // Filter to a pattern that excludes the bookmarked line.
+        app.set_search("this-will-not-match-zzzz");
+        app.filter_on = true;
+        app.rebuild_views();
+        assert!(!app.file().view.contains(&marked));
+        app.next_bookmark();
+        assert!(!app.filter_on);
+        assert_eq!(app.file().view[app.file().view_pos], marked);
     }
 }
