@@ -1107,6 +1107,26 @@ impl App {
         }
     }
 
+    /// Clear every bookmark on the current file.
+    pub fn clear_bookmarks(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before clearing bookmarks".into());
+            return;
+        }
+        let f = self.file_mut();
+        let n = f.bookmarks.len();
+        if n == 0 {
+            self.status = Some("no bookmarks to clear".into());
+            return;
+        }
+        f.bookmarks.clear();
+        self.status = Some(if n == 1 {
+            "cleared 1 bookmark".into()
+        } else {
+            format!("cleared {n} bookmarks")
+        });
+    }
+
     /// Jump to the next bookmarked line (wraps). Clears filter if needed.
     pub fn next_bookmark(&mut self) {
         self.jump_bookmark(1);
@@ -2732,6 +2752,31 @@ mod tests {
         // Toggle clears.
         app.toggle_bookmark();
         assert_eq!(app.file().bookmarks, vec![1]);
+    }
+
+    #[test]
+    fn clear_bookmarks_removes_all_marks() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.file_mut().view_pos = 0;
+        app.toggle_bookmark();
+        app.file_mut().view_pos = 2;
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks.len(), 2);
+        app.clear_bookmarks();
+        assert!(app.file().bookmarks.is_empty());
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("cleared 2 bookmarks")
+        );
+        app.clear_bookmarks();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no bookmarks to clear")
+        );
     }
 
     #[test]

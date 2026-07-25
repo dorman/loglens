@@ -296,6 +296,7 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('g') | KeyCode::Home => app.go_top(),
         KeyCode::Char('G') | KeyCode::End => app.go_bottom(),
         KeyCode::Char('m') => app.toggle_bookmark(),
+        KeyCode::Char('M') => app.clear_bookmarks(),
         KeyCode::Char('\'') => app.next_bookmark(),
         KeyCode::Char('"') => app.prev_bookmark(),
         KeyCode::Char('n') => app.next_match(),
@@ -634,6 +635,32 @@ mod tests {
     }
 
     #[test]
+    fn clear_bookmarks_key_empties_marks() {
+        let mut app = app_with_sample();
+        app.file_mut().view_pos = 0;
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        app.move_cursor(1);
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks.len(), 2);
+        handle_viewer(&mut app, KeyCode::Char('M'), KeyModifiers::NONE);
+        assert!(app.file().bookmarks.is_empty());
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("cleared 2 bookmarks")
+        );
+        // Second press reports that there is nothing left.
+        handle_viewer(&mut app, KeyCode::Char('M'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no bookmarks to clear")
+        );
+    }
+
+    #[test]
     fn bookmark_requires_open_file() {
         let mut empty = App::new(&[], Vec::new(), false).unwrap();
         handle_viewer(&mut empty, KeyCode::Char('m'), KeyModifiers::NONE);
@@ -651,6 +678,14 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("open a file before jumping bookmarks")
+        );
+        handle_viewer(&mut empty, KeyCode::Char('M'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before clearing bookmarks")
         );
     }
 }
