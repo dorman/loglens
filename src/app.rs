@@ -2899,6 +2899,32 @@ mod tests {
     }
 
     #[test]
+    fn clear_search_and_filter_names_what_was_cleared() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.clear_search_and_filter();
+        assert_eq!(app.status.as_deref(), Some("nothing to clear"));
+
+        app.set_search("error");
+        app.clear_search_and_filter();
+        assert!(app.search.is_none());
+        assert_eq!(app.status.as_deref(), Some("search cleared"));
+
+        app.filter_on = true;
+        app.rebuild_views();
+        app.clear_search_and_filter();
+        assert!(!app.filter_on);
+        assert_eq!(app.status.as_deref(), Some("filter cleared"));
+
+        app.set_search("error");
+        app.filter_on = true;
+        app.rebuild_views();
+        app.clear_search_and_filter();
+        assert!(app.search.is_none());
+        assert!(!app.filter_on);
+        assert_eq!(app.status.as_deref(), Some("search and filter cleared"));
+    }
+
+    #[test]
     fn next_bookmark_defeats_filter_when_hidden() {
         let mut app = app_with_paths(&["samples/sample.log"]);
         app.file_mut().view_pos = 0;
