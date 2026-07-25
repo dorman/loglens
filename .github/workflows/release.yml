@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v0.21.0). Leave empty when pushing a tag."
+        description: "Tag to release (e.g. v0.0.1). Leave empty when pushing a tag."
         required: false
         default: ""
 

@@ -28,10 +28,9 @@ fn disable_extra_modes() {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let theme_id = cli.theme.into();
-    let theme = theme::Theme::from_id(theme_id);
+    let theme = theme::Theme::dark();
     let rules = rules::build_rules(&cli, &theme)?;
-    let mut app = App::new_with_theme(&cli.files, rules, cli.ignore_case, theme_id)?;
+    let mut app = App::new(&cli.files, rules, cli.ignore_case)?;
 
     let mut terminal = ratatui::init();
     let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
