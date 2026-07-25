@@ -2635,6 +2635,31 @@ mod tests {
     }
 
     #[test]
+    fn clear_bookmarks_removes_all_marks() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.file_mut().view_pos = 0;
+        app.toggle_bookmark();
+        app.file_mut().view_pos = 2;
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks.len(), 2);
+        app.clear_bookmarks();
+        assert!(app.file().bookmarks.is_empty());
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("cleared 2 bookmarks")
+        );
+        app.clear_bookmarks();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no bookmarks to clear")
+        );
+    }
+
+    #[test]
     fn next_bookmark_defeats_filter_when_hidden() {
         let mut app = app_with_paths(&["samples/sample.log"]);
         app.file_mut().view_pos = 0;
