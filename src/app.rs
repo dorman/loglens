@@ -274,6 +274,8 @@ pub enum InputKind {
     Keyword,
     Regex,
     Search,
+    /// Jump to a 1-based absolute line number in the current file.
+    GoToLine,
 }
 
 pub struct Search {
@@ -515,6 +517,7 @@ impl App {
 
         match kind {
             InputKind::Search => self.set_search(&text),
+            InputKind::GoToLine => self.go_to_line_number(&text),
             InputKind::Keyword | InputKind::Regex => {
                 if text.is_empty() {
                     return;
@@ -539,6 +542,45 @@ impl App {
                     Err(e) => self.status = Some(format!("{e}")),
                 }
             }
+        }
+    }
+
+    /// Jump to a 1-based line number typed in the `:` prompt.
+    ///
+    /// Empty input is a no-op. Values past the end of the file clamp to the
+    /// last line (vim-style). Out-of-range zeros and non-numeric text report
+    /// a status message instead of moving.
+    fn go_to_line_number(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if !self.has_files() {
+            self.status = Some("open a file before jumping to a line".into());
+            return;
+        }
+        let Ok(n) = text.parse::<usize>() else {
+            self.status = Some(format!("invalid line number: {text}"));
+            return;
+        };
+        if n == 0 {
+            self.status = Some("line numbers start at 1".into());
+            return;
+        }
+        let last = self.file().lines.len().max(1);
+        let line = n.min(last) - 1; // convert to 0-based
+        let file = self.current;
+        self.jump_to_line(file, line);
+        let landed = self
+            .file()
+            .view
+            .get(self.file().view_pos)
+            .copied()
+            .unwrap_or(line)
+            + 1;
+        if n > last {
+            self.status = Some(format!("line {n} past end — jumped to L{landed}"));
+        } else {
+            self.status = Some(format!("jumped to L{landed}"));
         }
     }
 
@@ -1183,6 +1225,73 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before searching")
         );
+    }
+
+    #[test]
+    fn go_to_line_jumps_clamps_and_rejects_bad_input() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        let last = app.file().lines.len();
+        assert!(last >= 3);
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("3".chars());
+        app.confirm_input();
+        assert_eq!(app.file().view[app.file().view_pos], 2);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("jumped to L3")
+        );
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars(format!("{}", last + 50).chars());
+        app.confirm_input();
+        assert_eq!(app.file().view[app.file().view_pos], last - 1);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("past end")
+        );
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("0".chars());
+        app.confirm_input();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("start at 1")
+        );
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("abc".chars());
+        app.confirm_input();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("invalid line number")
+        );
+    }
+
+    #[test]
+    fn go_to_line_disables_filter_when_target_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        app.toggle_filter();
+        assert!(app.filter_on);
+        assert!(app.file().view.len() < app.file().lines.len());
+
+        // Line 1 is typically an INFO/header line not matching ERROR.
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("1".chars());
+        app.confirm_input();
+        assert!(!app.filter_on);
+        assert_eq!(app.file().view[app.file().view_pos], 0);
     }
 
     #[test]

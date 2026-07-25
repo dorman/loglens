@@ -579,10 +579,23 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         )])
     } else if app.has_files() {
         let file = app.file();
-        let pos = (file.view_pos + 1).min(file.view.len().max(1));
+        // Absolute (1-based) line of the cursor — stays meaningful in filter mode.
+        let abs_line = file
+            .view
+            .get(file.view_pos)
+            .copied()
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let total_lines = file.lines.len();
         let shown = file.view.len();
         let hl = file.total_matches();
-        let filter = if app.filter_on { " · filter" } else { "" };
+        // When filtered, surface how many lines remain so Lx/y isn't misleading.
+        let filter = if app.filter_on {
+            format!(" · {shown} shown")
+        } else {
+            String::new()
+        };
+        let trunc = if file.truncated { " · trunc" } else { "" };
         let search = match &app.search {
             Some(s) => {
                 let raw: String = s.raw.chars().take(20).collect();
@@ -597,7 +610,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         };
         let theme_label = t.id.label();
         Line::from(vec![Span::styled(
-            format!(" {pos}/{shown} · {hl} hl{filter}{search} · {theme_label}  ·  ? help"),
+            format!(
+                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{search} · {theme_label}  ·  ? help"
+            ),
             base,
         )])
     } else {
@@ -866,6 +881,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         InputKind::Keyword => "Add keyword highlight",
         InputKind::Regex => "Add regex highlight",
         InputKind::Search => "Search (case-insensitive)",
+        InputKind::GoToLine => "Go to line number",
     };
     let rect = centered_rect_lines(area, 60, 3);
     let block = t.panel(&format!(" {prompt} — Enter to go, Esc to cancel "), true);
@@ -931,6 +947,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
         Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
         Line::from("  g / G           jump to top / bottom"),
+        Line::from("  :               go to line number"),
         Line::from("  n / N           next / previous match"),
         Line::from("  Tab / ]         next open file"),
         Line::from("  Shift-Tab / [   previous open file"),

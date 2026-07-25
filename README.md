@@ -15,7 +15,7 @@ logs) and need to spot trouble fast.
 │   6 │ 2026-07-22 10:00:09 ERROR Certificate validation faile││                             │
 │   8 │ 2026-07-22 10:01:03 WARN  Suspicious process detected:││                             │
 ╰────────────────────────────────────────────────────────────╯╰─────────────────────────────╯
- 1/15 shown (15 total) · 7 hl · S scan  / search  f filter  n/N next  o open  a add  ? help
+ L4/15 · 7 hl · dark  ·  ? help
 ```
 
 ## Highlights
@@ -74,6 +74,7 @@ First moves once you're in:
 | `S`   | scan everything for known-bad signatures, ranked by severity |
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search |
+| `:`   | jump to a line number |
 | `f`   | filter down to only matching lines |
 | `?`   | full keybinding help |
 | `q`   | quit |

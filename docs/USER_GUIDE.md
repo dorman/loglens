@@ -157,15 +157,17 @@ Navigation:
 | `j` / `k`, `↓` / `↑` | one line down / up |
 | `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
+| `:` | go to line number (1-based; clamps past the end) |
 | `n` / `N` | next / previous match (highlights, or search results while searching) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
-The status bar stays short on purpose: position, highlight count, filter/search
-state, and the active theme — full keybindings live behind `?`. Log lines are
-soft-tinted by level (`ERROR` / `WARN` / `INFO` / `DEBUG`) even before you add
-highlights, so severity stands out while scrolling.
+The status bar stays short on purpose: absolute line (`L42/1200`), highlight
+count, filter/search state, truncation hint, and the active theme — full
+keybindings live behind `?`. Press `:` to jump straight to a line number.
+Log lines are soft-tinted by level (`ERROR` / `WARN` / `INFO` / `DEBUG`) even
+before you add highlights, so severity stands out while scrolling.
 
 Themes: press **`t`** to cycle `dark` → `light` → `hc` (high-contrast), or start
 with `--theme light` / `--theme hc`. Highlight rule colors follow the theme.
@@ -272,8 +274,9 @@ input prompt, never interpreted as keystrokes.
 Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`t` theme · `o` file browser · `w` close file · `q` quit
+`:` go to line · `n`/`N` next/prev match · `Tab`/`]` next file ·
+`Shift-Tab`/`[` prev file · `t` theme · `o` file browser · `w` close file ·
+`q` quit
 
 **Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
 

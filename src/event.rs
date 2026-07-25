@@ -287,6 +287,14 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::BackTab | KeyCode::Char('[') => app.prev_file(),
         // Scan for known-bad signatures.
         KeyCode::Char('S') => app.begin_scan(),
+        // Go to absolute line number (1-based), like less/vim.
+        KeyCode::Char(':') => {
+            if app.has_files() {
+                app.begin_input(InputKind::GoToLine);
+            } else {
+                app.status = Some("open a file before jumping to a line".into());
+            }
+        }
         // Search & filter (require an open file — otherwise search_hits would
         // panic on the empty welcome screen).
         KeyCode::Char('/') => {
@@ -368,6 +376,22 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before filtering")
         );
+        handle_viewer(&mut empty, KeyCode::Char(':'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping to a line")
+        );
+    }
+
+    #[test]
+    fn viewer_colon_begins_go_to_line() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char(':'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Input);
+        assert_eq!(app.input_kind, InputKind::GoToLine);
     }
 
     #[test]
