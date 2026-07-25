@@ -317,6 +317,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         // Import / manage files.
         KeyCode::Char('o') => app.open_browser(),
         KeyCode::Char('w') => app.close_current_file(),
+        // Copy the cursor line to the system clipboard (OSC-52).
+        KeyCode::Char('y') => app.yank_current_line(),
         // Manage highlights.
         KeyCode::Char('a') => app.begin_input(InputKind::Keyword),
         KeyCode::Char('r') => app.begin_input(InputKind::Regex),
@@ -377,6 +379,27 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("open a file before filtering")
+        );
+    }
+
+    #[test]
+    fn viewer_y_yanks_or_prompts_to_open() {
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('y'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
+        );
+
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("copied line") || status.contains("copy failed"),
+            "unexpected yank status: {status}"
         );
     }
 

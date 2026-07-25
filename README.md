@@ -75,6 +75,7 @@ First moves once you're in:
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search |
 | `f`   | filter down to only matching lines |
+| `y`   | copy the cursor line to the clipboard |
 | `?`   | full keybinding help |
 | `q`   | quit |
 

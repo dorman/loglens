@@ -1344,6 +1344,37 @@ impl App {
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
     }
+
+    /// Absolute 1-based line number and text under the cursor, if any.
+    pub fn cursor_line(&self) -> Option<(usize, &str)> {
+        if !self.has_files() {
+            return None;
+        }
+        let file = self.file();
+        let &line_idx = file.view.get(file.view_pos)?;
+        Some((line_idx + 1, file.lines.get(line_idx)?.as_str()))
+    }
+
+    /// Copy the cursor line to the system clipboard (OSC-52) and set status.
+    pub fn yank_current_line(&mut self) {
+        let Some((line_no, text)) = self.cursor_line() else {
+            self.status = Some("open a file before copying".into());
+            return;
+        };
+        let text = text.to_owned();
+        match crate::clipboard::copy_text(&text) {
+            Ok(outcome) => {
+                self.status = Some(if outcome.truncated {
+                    format!("copied line {line_no} (truncated)")
+                } else {
+                    format!("copied line {line_no}")
+                });
+            }
+            Err(_) => {
+                self.status = Some("copy failed (terminal may block clipboard)".into());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1372,6 +1403,29 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("open a file before searching")
+        );
+    }
+
+    #[test]
+    fn cursor_line_tracks_view_position() {
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        let (line_no, text) = app.cursor_line().expect("sample has lines");
+        assert_eq!(line_no, 1);
+        assert!(!text.is_empty());
+        app.move_cursor(2);
+        let (line_no, _) = app.cursor_line().expect("still on a line");
+        assert_eq!(line_no, 3);
+    }
+
+    #[test]
+    fn yank_without_files_sets_status() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.yank_current_line();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
         );
     }
 

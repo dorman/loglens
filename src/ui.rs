@@ -981,6 +981,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  click a tab     switch open file"),
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
+        Line::from("  y               copy the cursor line to the clipboard"),
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),

@@ -158,6 +158,7 @@ Navigation:
 | `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
 | `n` / `N` | next / previous match (highlights, or search results while searching) |
+| `y` | copy the cursor line to the system clipboard (OSC-52) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
@@ -270,7 +271,7 @@ Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
 `n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`o` file browser · `w` close file · `q` quit
+`o` file browser · `w` close file · `y` copy cursor line · `q` quit
 
 **Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
 
