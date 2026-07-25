@@ -342,6 +342,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.status = Some("open a file before filtering".into());
             }
         }
+        // One-shot clear of search + filter (Esc still peels one layer at a time).
+        KeyCode::Char('c') => app.clear_search_and_filter(),
         // Import / manage files.
         KeyCode::Char('o') => app.open_browser(),
         KeyCode::Char('w') => app.close_current_file(),
@@ -696,6 +698,26 @@ mod tests {
         // Third Esc finally quits.
         handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn c_clears_search_and_filter_together() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("error".chars());
+        app.confirm_input();
+        handle_viewer(&mut app, KeyCode::Char('f'), KeyModifiers::NONE);
+        assert!(app.search.is_some());
+        assert!(app.filter_on);
+        handle_viewer(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert!(app.search.is_none());
+        assert!(!app.filter_on);
+        assert!(!app.should_quit);
+        assert_eq!(app.status.as_deref(), Some("search and filter cleared"));
+        // Idle press reports nothing to clear (does not quit).
+        handle_viewer(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(app.status.as_deref(), Some("nothing to clear"));
+        assert!(!app.should_quit);
     }
 
     #[test]

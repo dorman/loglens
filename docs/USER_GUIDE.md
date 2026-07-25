@@ -259,6 +259,7 @@ with size/nest budgets so a pathological pattern cannot hang the TUI.
 | --- | ------ |
 | `/` | search (case-insensitive, literal text). `n`/`N` walk results (wraps) |
 | `f` | **filter mode** — collapse the view to only matching lines |
+| `c` | clear search and filter together (one key) |
 | `Esc` | clear search → clear filter → quit (peels one layer at a time) |
 
 Filter mode is the biggest time-saver in the tool:
@@ -268,7 +269,8 @@ Filter mode is the biggest time-saver in the tool:
 
 Either way, original line numbers are preserved, so a 10,000-line log
 becomes the 40 lines worth reading without losing your place. Press `f`
-again (or `Esc` once search is cleared) to restore the full view.
+again, `c` (clears search and filter together), or `Esc` once search is
+cleared to restore the full view.
 
 Search matches render with a bright white highlight, layered on top of any
 keyword colors.
@@ -308,7 +310,7 @@ Press `?` in the app for this list any time.
 `q`/`Esc` close
 
 **Search & filter** — `/` search · `f` filter · `n`/`N` walk matches (wraps) ·
-`Esc` clear search → clear filter → quit
+`c` clear search+filter · `Esc` clear search → clear filter → quit
 
 **Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend
