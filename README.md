@@ -78,7 +78,7 @@ First moves once you're in:
 | `p`/`P` | next / previous finding (no panel needed) |
 | `e`   | export findings to `loglens-findings.md` |
 | `a`   | add a keyword highlight (each gets its own color) |
-| `/`   | search |
+| `/`   | search (`Enter` first hit · `n`/`N` walk) |
 | `:`   | jump to a line number |
 | `f`   | filter down to only matching lines |
 | `m`   | bookmark the current line (`'` / `"` jump · `M` clear all) |

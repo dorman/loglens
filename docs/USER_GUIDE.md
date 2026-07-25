@@ -170,6 +170,7 @@ Navigation:
 | `M` | clear all bookmarks on the current file |
 | `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
 | `y` | copy the cursor line to the system clipboard (OSC-52) |
+| `Enter` | jump to the first match (highlights, or search results while searching) |
 | `n` / `N` | next / previous match (wraps; highlights, or search results while searching) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
@@ -259,7 +260,7 @@ with size/nest budgets so a pathological pattern cannot hang the TUI.
 
 | Key | Action |
 | --- | ------ |
-| `/` | search (case-insensitive, literal text). `n`/`N` walk results (wraps) |
+| `/` | search (case-insensitive, literal text). `Enter` jumps to the first hit; `n`/`N` walk results (wraps) |
 | `f` | **filter mode** — collapse the view to only matching lines |
 | `c` | clear search and filter together (one key) |
 | `Esc` | clear search → clear filter → quit (peels one layer at a time) |
@@ -303,16 +304,17 @@ Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u`/`Space`/`PgDn`/`PgUp` page ·
 `g`/`G`/`Home`/`End` top/bottom · `:` go to line · `m` bookmark ·
-`M` clear bookmarks · `'`/`"` next/prev bookmark · `n`/`N` next/prev match
-(wraps) · `Tab`/`]` next file · `Shift-Tab`/`[` prev file · `o` file browser ·
-`w` close file · `y` copy cursor line · `q` quit
+`M` clear bookmarks · `'`/`"` next/prev bookmark · `Enter` first match ·
+`n`/`N` next/prev match (wraps) · `Tab`/`]` next file · `Shift-Tab`/`[` prev
+file · `o` file browser · `w` close file · `y` copy cursor line · `q` quit
 
 **Scan** — `S` scan · `s` reopen findings · `p`/`P` next/prev finding (wraps) ·
 `e` export markdown · in panel: `j`/`k` move, `Enter` jump, `e` export,
 `q`/`Esc` close
 
-**Search & filter** — `/` search · `f` filter · `n`/`N` walk matches (wraps) ·
-`c` clear search+filter · `Esc` clear search → clear filter → quit
+**Search & filter** — `/` search · `f` filter · `Enter` first match ·
+`n`/`N` walk matches (wraps) · `c` clear search+filter · `Esc` clear search →
+clear filter → quit
 
 **Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend
