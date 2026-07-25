@@ -1,0 +1,161 @@
+//! Tiny on-disk preferences for loglens.
+//!
+//! Stored as a simple `key=value` file under the platform config directory
+//! (`$XDG_CONFIG_HOME/loglens` / `~/.config/loglens`, or `%APPDATA%\loglens`
+//! on Windows). Override with `LOGLENS_CONFIG_DIR` for tests / special setups.
+//!
+//! No TOML/JSON crate — keep the surface small until more settings appear.
+
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
+/// User preferences that survive across sessions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Config {
+    /// When true, keyword/regex highlights match case-insensitively.
+    pub ignore_case: bool,
+}
+
+/// Resolve the directory that holds `config`. Honours `LOGLENS_CONFIG_DIR`
+/// first so unit tests can use a temp folder without touching the real home.
+pub fn config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = env::var("LOGLENS_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        return Some(PathBuf::from(dir));
+    }
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg).join("loglens"));
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = env::var("APPDATA")
+            && !appdata.is_empty()
+        {
+            return Some(PathBuf::from(appdata).join("loglens"));
+        }
+    }
+    env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("loglens"))
+}
+
+fn config_path() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("config"))
+}
+
+/// Load preferences. Missing file / unreadable path → defaults (all false).
+pub fn load() -> Config {
+    let Some(path) = config_path() else {
+        return Config::default();
+    };
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Config::default();
+    };
+    parse(&text)
+}
+
+/// Persist preferences. Best-effort: failures are silent at the call site
+/// (status text reports success/failure when the user toggles).
+pub fn save(cfg: &Config) -> std::io::Result<()> {
+    let dir = config_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no config directory (set HOME or LOGLENS_CONFIG_DIR)",
+        )
+    })?;
+    fs::create_dir_all(&dir)?;
+    let path = dir.join("config");
+    let body = format!(
+        "# loglens preferences — updated when you press `i` in the TUI\n\
+         ignore_case={}\n",
+        if cfg.ignore_case { "true" } else { "false" }
+    );
+    fs::write(path, body)
+}
+
+fn parse(text: &str) -> Config {
+    let mut cfg = Config::default();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key == "ignore_case" {
+            cfg.ignore_case = parse_bool(value);
+        }
+    }
+    cfg
+}
+
+fn parse_bool(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize env mutations across config tests in this process.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn parse_ignore_case_variants() {
+        assert!(parse("ignore_case=true\n").ignore_case);
+        assert!(parse("ignore_case=YES\n").ignore_case);
+        assert!(parse("ignore_case=1\n").ignore_case);
+        assert!(parse("# comment\nignore_case = on\n").ignore_case);
+        assert!(!parse("ignore_case=false\n").ignore_case);
+        assert!(!parse("ignore_case=no\n").ignore_case);
+        assert!(!parse("").ignore_case);
+        assert!(!parse("# only comments\n").ignore_case);
+    }
+
+    #[test]
+    fn load_save_roundtrip_via_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-config-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+
+        assert_eq!(load(), Config::default());
+
+        let on = Config { ignore_case: true };
+        save(&on).unwrap();
+        assert_eq!(load(), on);
+
+        let off = Config { ignore_case: false };
+        save(&off).unwrap();
+        assert_eq!(load(), off);
+
+        let text = fs::read_to_string(dir.join("config")).unwrap();
+        assert!(text.contains("ignore_case=false"));
+        assert!(text.contains('#'));
+
+        unsafe {
+            env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
