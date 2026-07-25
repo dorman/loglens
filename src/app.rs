@@ -1177,39 +1177,57 @@ impl App {
         ));
     }
 
+    /// Jump to the next active match (search hits if searching, else highlight
+    /// hits). Wraps and reports `match i/n · line L` like bookmark jumps.
     pub fn next_match(&mut self) {
-        if !self.has_files() {
-            return;
-        }
-        let start = self.file().view_pos;
-        let view = self.file().view.clone();
-        let hit = view
-            .iter()
-            .enumerate()
-            .skip(start + 1)
-            .find(|&(_, &line)| self.is_active_match(line))
-            .map(|(pos, _)| pos);
-        if let Some(pos) = hit {
-            self.file_mut().view_pos = pos;
-            self.ensure_cursor_visible();
-            self.clamp_scroll();
-        }
+        self.jump_match(1);
     }
 
+    /// Jump to the previous active match (wraps; see [`Self::next_match`]).
     pub fn prev_match(&mut self) {
+        self.jump_match(-1);
+    }
+
+    fn jump_match(&mut self, dir: isize) {
         if !self.has_files() {
+            self.status = Some("open a file before jumping matches".into());
             return;
         }
-        let start = self.file().view_pos;
         let view = self.file().view.clone();
-        for pos in (0..start).rev() {
-            if self.is_active_match(view[pos]) {
-                self.file_mut().view_pos = pos;
-                self.ensure_cursor_visible();
-                self.clamp_scroll();
-                return;
-            }
+        let hits: Vec<usize> = view
+            .iter()
+            .enumerate()
+            .filter(|&(_, &line)| self.is_active_match(line))
+            .map(|(pos, _)| pos)
+            .collect();
+        if hits.is_empty() {
+            self.status = Some(if self.search.is_some() {
+                "no search matches".into()
+            } else {
+                "no highlight matches — press a to add, or / to search".into()
+            });
+            return;
         }
+        let cur = self.file().view_pos;
+        let n = hits.len() as isize;
+        let next_idx = if dir > 0 {
+            hits.iter().position(|&p| p > cur).unwrap_or(0)
+        } else {
+            hits.iter()
+                .rposition(|&p| p < cur)
+                .unwrap_or((n - 1) as usize)
+        };
+        let pos = hits[next_idx];
+        let line = view[pos];
+        self.file_mut().view_pos = pos;
+        self.ensure_cursor_visible();
+        self.clamp_scroll();
+        self.status = Some(format!(
+            "match {}/{} · line {}",
+            next_idx + 1,
+            hits.len(),
+            line + 1
+        ));
     }
 
     /// Scroll the viewport by `delta` lines (mouse wheel / scrollbar), dragging
@@ -2166,8 +2184,80 @@ mod tests {
         let start = app.file().view_pos;
         app.next_match();
         assert!(app.file().view_pos > start || hit_lines <= 1);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("match "),
+            "next_match should report position: {:?}",
+            app.status
+        );
         app.prev_match();
         assert_eq!(app.file().view_pos, start);
+    }
+
+    #[test]
+    fn match_nav_wraps_and_reports_empty() {
+        let rule = rules::compile_rule("ERROR", false, true, 0, &Theme::dark()).unwrap();
+        let mut app = App::new(&["samples/sample.log".into()], vec![rule], true).unwrap();
+        assert!(app.file().rule_counts[0] > 0);
+
+        // From the bottom, next_match wraps to the first hit.
+        app.go_bottom();
+        app.next_match();
+        let first = app.file().view_pos;
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("match 1/"),
+            "wrap-to-first should report match 1/n: {:?}",
+            app.status
+        );
+
+        // From the first hit, prev_match wraps to the last.
+        app.prev_match();
+        let last = app.file().view_pos;
+        let status = app.status.as_deref().unwrap_or("").to_string();
+        assert!(
+            status.starts_with("match ") && status.contains('/'),
+            "prev wrap should report match i/n: {status:?}"
+        );
+        assert!(last >= first, "last match should be at or after first");
+
+        // From the last hit, next_match wraps back to the first.
+        app.next_match();
+        assert_eq!(app.file().view_pos, first);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("match 1/"),
+            "{:?}",
+            app.status
+        );
+
+        // No highlights and no search → clear status guidance.
+        let mut bare = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        bare.next_match();
+        assert!(
+            bare.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no highlight matches"),
+            "{:?}",
+            bare.status
+        );
+
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        empty.next_match();
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping matches")
+        );
     }
 
     #[test]
