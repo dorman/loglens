@@ -161,14 +161,14 @@ Navigation:
 | Key | Action |
 | --- | ------ |
 | `j` / `k`, `↓` / `↑` | one line down / up |
-| `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
+| `Ctrl-d` / `Ctrl-u`, `Space` / `PgDn`, `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
 | `:` | go to line number (1-based; clamps past the end) |
 | `m` | toggle a bookmark on the current line |
 | `M` | clear all bookmarks on the current file |
 | `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
 | `y` | copy the cursor line to the system clipboard (OSC-52) |
-| `n` / `N` | next / previous match (highlights, or search results while searching) |
+| `n` / `N` | next / previous match (wraps; highlights, or search results while searching) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
@@ -255,7 +255,7 @@ with size/nest budgets so a pathological pattern cannot hang the TUI.
 
 | Key | Action |
 | --- | ------ |
-| `/` | search (case-insensitive, literal text). `n`/`N` walk results |
+| `/` | search (case-insensitive, literal text). `n`/`N` walk results (wraps) |
 | `f` | **filter mode** — collapse the view to only matching lines |
 | `Esc` | clear search → clear filter → quit (peels one layer at a time) |
 
@@ -295,15 +295,17 @@ input prompt, never interpreted as keystrokes.
 
 Press `?` in the app for this list any time.
 
-**Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`:` go to line · `m` bookmark · `M` clear bookmarks · `'`/`"` next/prev bookmark ·
-`n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`o` file browser · `w` close file · `y` copy cursor line · `q` quit
+**Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u`/`Space`/`PgDn`/`PgUp` page ·
+`g`/`G`/`Home`/`End` top/bottom · `:` go to line · `m` bookmark ·
+`M` clear bookmarks · `'`/`"` next/prev bookmark · `n`/`N` next/prev match
+(wraps) · `Tab`/`]` next file · `Shift-Tab`/`[` prev file · `o` file browser ·
+`w` close file · `y` copy cursor line · `q` quit
 
 **Scan** — `S` scan · `s` reopen findings · `e` export markdown · in panel:
 `j`/`k` move, `Enter` jump, `e` export, `q`/`Esc` close
 
-**Search & filter** — `/` search · `f` filter · `Esc` clear search → clear filter → quit
+**Search & filter** — `/` search · `f` filter · `n`/`N` walk matches (wraps) ·
+`Esc` clear search → clear filter → quit
 
 **Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend

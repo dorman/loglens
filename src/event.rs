@@ -296,7 +296,9 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('k') | KeyCode::Up => app.move_cursor(-1),
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
-        KeyCode::PageDown => app.page_down(),
+        // Space mirrors less/more page-down; Shift-Space is not distinguished in
+        // most terminals, so page-up stays on Ctrl-u / PgUp.
+        KeyCode::Char(' ') | KeyCode::PageDown => app.page_down(),
         KeyCode::PageUp => app.page_up(),
         KeyCode::Char('g') | KeyCode::Home => app.go_top(),
         KeyCode::Char('G') | KeyCode::End => app.go_bottom(),
@@ -445,6 +447,17 @@ mod tests {
         app.mode = Mode::Viewer;
         handle_viewer(&mut app, KeyCode::Char('S'), KeyModifiers::NONE);
         assert!(app.scanning());
+    }
+
+    #[test]
+    fn viewer_space_pages_down_like_less() {
+        let mut app = app_with_sample();
+        app.viewport_height = 5;
+        let start = app.file().view_pos;
+        handle_viewer(&mut app, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, start + 5);
+        handle_viewer(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, start + 10);
     }
 
     #[test]
