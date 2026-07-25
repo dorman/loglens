@@ -2529,7 +2529,10 @@ mod tests {
             "expected path ending in sample.log, got {}",
             path.display()
         );
-        assert!(path.is_absolute(), "stored path should be absolute when possible");
+        assert!(
+            path.is_absolute(),
+            "stored path should be absolute when possible"
+        );
     }
 
     #[test]
