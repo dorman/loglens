@@ -597,8 +597,10 @@ fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
         ))));
     } else {
         for (i, rule) in app.rules.iter().enumerate() {
+            // Prefer `.get` so a transient rules/counts mismatch (e.g. mid
+            // chunked rescan) cannot panic the render path.
             let count = if app.has_files() {
-                app.file().rule_counts[i]
+                app.file().rule_counts.get(i).copied().unwrap_or(0)
             } else {
                 0
             };

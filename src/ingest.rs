@@ -218,7 +218,13 @@ fn extract_zip(path: &Path) -> Result<ResolveOutcome> {
     let mut total_written: u64 = 0;
     let entry_count = archive.len().min(MAX_EXTRACT_ENTRIES);
     for i in 0..entry_count {
-        let mut zf = archive.by_index(i)?;
+        // Do not `?` on by_index after `root` exists: encrypted / corrupt
+        // entries would abort the whole open and leak the temp directory.
+        // Skip the bad entry and keep extracting the rest.
+        let mut zf = match archive.by_index(i) {
+            Ok(zf) => zf,
+            Err(_) => continue,
+        };
         if zf.is_dir() {
             continue;
         }
@@ -296,6 +302,46 @@ mod tests {
         assert!(is_zip(Path::new("bundle.ZIP")));
         assert!(is_zip(Path::new("a.zip")));
         assert!(!is_zip(Path::new("a.log")));
+    }
+
+    #[test]
+    fn extract_zip_skips_encrypted_entry_and_keeps_plaintext() {
+        // Traditional PKWARE encryption makes by_index return
+        // Err(PASSWORD_REQUIRED). Previously `by_index(i)?` aborted extract
+        // after create_dir_all and leaked the temp root (and failed the open).
+        use zip::unstable::write::FileOptionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-enczip-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("mixed.zip");
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let plain = zip::write::SimpleFileOptions::default();
+            zip.start_file("safe.log", plain).unwrap();
+            zip.write_all(b"hello plaintext\n").unwrap();
+            let enc = zip::write::SimpleFileOptions::default()
+                .with_deprecated_encryption(b"secret")
+                .expect("encrypt options");
+            zip.start_file("secret.log", enc).unwrap();
+            zip.write_all(b"top secret\n").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let outcome = extract_zip(&zip_path).expect("encrypted entry must not fail the open");
+        let names: Vec<_> = outcome.targets.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.iter().any(|n| n.ends_with("safe.log")));
+        assert!(names.iter().all(|n| !n.contains("secret")));
+        let temp = outcome.temp_dir.expect("temp dir");
+        assert!(temp.exists());
+        fs::remove_dir_all(&temp).ok();
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -792,6 +792,12 @@ impl App {
             return;
         }
 
+        // Rules are already mutated (add/remove/case) before the chunked pass
+        // commits. Align per-file metadata now so the legend cannot index past
+        // `rule_counts` on the next draw, and so Esc-cancel cannot leave
+        // highlight spans pointing at removed rule indices.
+        self.align_rule_metadata();
+
         let total: usize = self.files.iter().map(|f| f.lines.len()).sum();
         self.rescan = Some(RescanState {
             file: 0,
@@ -805,6 +811,48 @@ impl App {
         self.status = Some("updating highlights…".into());
         if total == 0 {
             let _ = self.rescan_step(1);
+        }
+    }
+
+    /// Keep `rule_counts` / orphan match spans consistent with `self.rules`.
+    ///
+    /// Called when rules change before a chunked rescan commits (or when a
+    /// rescan is cancelled) so UI paths that index `rule_counts[i]` for each
+    /// rule cannot panic, and removed rules do not leave ghost highlights.
+    fn align_rule_metadata(&mut self) {
+        let n = self.rules.len();
+        let mut stripped_any = false;
+        for f in &mut self.files {
+            let mut stripped = false;
+            for spans in &mut f.matches {
+                let before = spans.len();
+                spans.retain(|m| m.rule < n);
+                if spans.len() != before {
+                    stripped = true;
+                }
+            }
+            if stripped {
+                stripped_any = true;
+                f.match_lines = f
+                    .matches
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, s)| (!s.is_empty()).then_some(i))
+                    .collect();
+                f.rule_counts = vec![0; n];
+                for spans in &f.matches {
+                    for m in spans {
+                        f.rule_counts[m.rule] += 1;
+                    }
+                }
+            } else if f.rule_counts.len() != n {
+                f.rule_counts.resize(n, 0);
+            }
+        }
+        if stripped_any {
+            // Filter views keyed on `match_lines` must drop lines that only
+            // matched a just-removed rule.
+            self.rebuild_views();
         }
     }
 
@@ -896,6 +944,8 @@ impl App {
     pub fn cancel_rescan(&mut self) {
         if self.rescan.take().is_some() {
             // Pending work is dropped; previously committed highlights stay.
+            // Re-align in case `begin_rescan` was skipped or rules changed again.
+            self.align_rule_metadata();
             self.status = Some("highlight update cancelled".into());
         }
     }
@@ -2193,6 +2243,67 @@ mod tests {
         assert!(!app.rescanning());
         assert!(app.scanning());
         app.cancel_scan();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn adding_rule_pads_rule_counts_before_rescan_commits() {
+        // Regression: chunked rescan mutates `rules` before committing match
+        // data. The legend indexes `rule_counts[i]` for each rule on every
+        // frame — including the first frame after `a`/`r` confirm — so counts
+        // must be length-aligned immediately in `begin_rescan`.
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        assert!(app.file().rule_counts.is_empty());
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        assert_eq!(app.rules.len(), 1);
+        assert_eq!(
+            app.file().rule_counts.len(),
+            app.rules.len(),
+            "legend would panic if rule_counts lagged rules after add"
+        );
+        // Cancel must keep the alignment (rule stays; counts stay sized).
+        if app.rescanning() {
+            app.cancel_rescan();
+        }
+        assert_eq!(app.rules.len(), 1);
+        assert_eq!(app.file().rule_counts.len(), 1);
+    }
+
+    #[test]
+    fn cancel_rescan_after_remove_strips_orphan_spans() {
+        let rule = rules::compile_rule("ERROR", false, true, 0, &Theme::dark()).unwrap();
+        let dir = tmp_name("rescan-remove");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.log");
+        fs::write(&path, "ERROR a\nINFO b\n".repeat(4_000)).unwrap();
+        let mut app = App::new(&[path.to_string_lossy().into()], vec![rule], true).unwrap();
+        assert!(app.file().total_matches() > 0);
+        app.filter_on = true;
+        app.rebuild_views();
+        let filtered = app.file().view.len();
+        assert!(filtered > 0);
+
+        app.remove_last_rule();
+        assert!(app.rules.is_empty());
+        assert!(app.rescanning());
+        // Orphan spans for the removed rule must not survive into cancel.
+        assert!(
+            app.file()
+                .matches
+                .iter()
+                .all(|spans| spans.iter().all(|m| m.rule < app.rules.len())),
+            "begin_rescan must strip spans for removed rules"
+        );
+        assert_eq!(app.file().rule_counts.len(), 0);
+        app.cancel_rescan();
+        assert!(app.rules.is_empty());
+        assert_eq!(app.file().total_matches(), 0);
+        assert!(
+            app.file().view.is_empty() || !app.filter_on,
+            "filter view must not keep lines that only matched the removed rule"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
