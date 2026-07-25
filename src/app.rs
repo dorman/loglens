@@ -112,6 +112,7 @@ pub struct Regions {
     pub findings_top: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MatchSpan {
     pub start: usize,
     pub end: usize,
