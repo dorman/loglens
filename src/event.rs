@@ -383,7 +383,9 @@ mod tests {
     }
 
     #[test]
-    fn viewer_y_yanks_or_prompts_to_open() {
+    fn viewer_y_without_files_prompts_to_open() {
+        // Avoid yanking with a real file here — OSC-52 would write escape
+        // codes to the test runner's stdout.
         let mut empty = App::new(&[], Vec::new(), false).unwrap();
         handle_viewer(&mut empty, KeyCode::Char('y'), KeyModifiers::NONE);
         assert!(
@@ -392,14 +394,6 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("open a file before copying")
-        );
-
-        let mut app = app_with_sample();
-        handle_viewer(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
-        let status = app.status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("copied line") || status.contains("copy failed"),
-            "unexpected yank status: {status}"
         );
     }
 
