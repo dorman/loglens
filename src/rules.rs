@@ -85,26 +85,14 @@ pub fn build_rules(cli: &Cli, theme: &Theme, ignore_case: bool) -> Result<Vec<Ru
         if rules.len() >= MAX_RULES {
             bail!("too many highlight rules (max {MAX_RULES})");
         }
-        rules.push(compile_rule(
-            kw,
-            false,
-            ignore_case,
-            rules.len(),
-            theme,
-        )?);
+        rules.push(compile_rule(kw, false, ignore_case, rules.len(), theme)?);
     }
 
     for pat in &cli.regexes {
         if rules.len() >= MAX_RULES {
             bail!("too many highlight rules (max {MAX_RULES})");
         }
-        rules.push(compile_rule(
-            pat,
-            true,
-            ignore_case,
-            rules.len(),
-            theme,
-        )?);
+        rules.push(compile_rule(pat, true, ignore_case, rules.len(), theme)?);
     }
 
     Ok(rules)
