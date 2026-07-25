@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 use regex::Regex;
 
-use crate::app::{App, InputKind, LogFile, Mode};
+use crate::app::{App, InputKind, LogFile, MatchSpan, Mode};
 use crate::rules::Rule;
 use crate::signatures::Severity;
 use crate::theme::{self, Theme};
@@ -390,10 +390,42 @@ fn draw_welcome(frame: &mut Frame, theme: &Theme, area: Rect) {
     );
 }
 
+/// Byte offset after skipping `cols` Unicode scalars from the start of `text`.
+/// Used for horizontal scroll so we always cut on a char boundary.
+fn h_scroll_byte_offset(text: &str, cols: usize) -> usize {
+    if cols == 0 {
+        return 0;
+    }
+    text.char_indices()
+        .nth(cols)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
+/// Shift match spans left by `byte_off`, dropping anything that ends before the cut.
+fn shift_spans_left(spans: &[MatchSpan], byte_off: usize) -> Vec<MatchSpan> {
+    if byte_off == 0 {
+        return spans.to_vec();
+    }
+    spans
+        .iter()
+        .filter_map(|s| {
+            if s.end <= byte_off {
+                return None;
+            }
+            Some(MatchSpan {
+                start: s.start.saturating_sub(byte_off),
+                end: s.end - byte_off,
+                rule: s.rule,
+            })
+        })
+        .collect()
+}
+
 /// Split one line into styled spans, layering search matches over rule matches.
 fn render_line_spans<'a>(
     text: &'a str,
-    rule_spans: &[crate::app::MatchSpan],
+    rule_spans: &[MatchSpan],
     rules: &[Rule],
     search: Option<&Regex>,
     theme: &Theme,
@@ -510,11 +542,15 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
 
     let gutter_width = file.lines.len().to_string().len().max(4);
     let end = (file.top + height).min(file.view.len());
+    let h_scroll = file.h_scroll;
 
     let mut lines: Vec<Line> = Vec::with_capacity(end.saturating_sub(file.top));
     for vp in file.top..end {
         let line_idx = file.view[vp];
-        let text = &file.lines[line_idx];
+        let full = &file.lines[line_idx];
+        let byte_off = h_scroll_byte_offset(full, h_scroll);
+        let text = &full[byte_off..];
+        let shifted = shift_spans_left(&file.matches[line_idx], byte_off);
         let is_cursor = vp == file.view_pos;
 
         let mut spans = Vec::new();
@@ -532,13 +568,11 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
             format!("{:>width$} \u{2502} ", line_idx + 1, width = gutter_width),
             Style::default().fg(gutter_fg),
         ));
-        spans.extend(render_line_spans(
-            text,
-            &file.matches[line_idx],
-            &app.rules,
-            search,
-            t,
-        ));
+        // Dim cue that more content exists to the left of the viewport.
+        if h_scroll > 0 {
+            spans.push(Span::styled("‹", Style::default().fg(t.text_dim)));
+        }
+        spans.extend(render_line_spans(text, &shifted, &app.rules, search, t));
 
         let mut line = Line::from(spans);
         if is_cursor {
@@ -671,6 +705,11 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             String::new()
         };
+        let col = if file.h_scroll > 0 {
+            format!(" · col {}", file.h_scroll + 1)
+        } else {
+            String::new()
+        };
         let findings = if app.findings.is_empty() {
             String::new()
         } else {
@@ -678,7 +717,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         };
         Line::from(vec![Span::styled(
             format!(
-                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{ic}{search}{bookmarks}{findings}  ·  ? help"
+                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{ic}{search}{bookmarks}{col}{findings}  ·  ? help"
             ),
             base,
         )])
@@ -1010,6 +1049,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         head("Viewer"),
         Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
+        Line::from("  ← / →           pan left / right (long lines)"),
+        Line::from("  0               reset horizontal scroll to column 1"),
         Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
         Line::from("  Space / PgDn    page down"),
         Line::from("  PgUp            page up"),
@@ -1027,6 +1068,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
         Line::from("  y               copy the cursor line to the clipboard"),
+        Line::from("  Y               copy the current file path to the clipboard"),
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
@@ -1037,7 +1079,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         head("Search & filter"),
         Line::from("  /               search (Enter first · n/N walk)"),
-        Line::from("  f               filter: show only matching lines"),
+        Line::from("  f               filter: matching lines only (status if cursor hidden)"),
         Line::from("  c               clear search and filter together"),
         Line::from("  Esc             clear search → clear filter → quit"),
         Line::from(""),
@@ -1073,9 +1115,50 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::MatchSpan;
     use crate::rules;
     use crate::theme::Theme;
+
+    #[test]
+    fn h_scroll_byte_offset_respects_unicode() {
+        assert_eq!(h_scroll_byte_offset("abcdef", 0), 0);
+        assert_eq!(h_scroll_byte_offset("abcdef", 3), 3);
+        assert_eq!(h_scroll_byte_offset("abcdef", 99), 6);
+        // Multi-byte scalar: skip one char → past "字".
+        assert_eq!(h_scroll_byte_offset("字abc", 1), "字".len());
+        assert_eq!(h_scroll_byte_offset("字abc", 2), "字".len() + 1);
+    }
+
+    #[test]
+    fn shift_spans_left_drops_and_clips() {
+        let spans = [
+            MatchSpan {
+                start: 0,
+                end: 5,
+                rule: 0,
+            },
+            MatchSpan {
+                start: 8,
+                end: 12,
+                rule: 1,
+            },
+        ];
+        let shifted = shift_spans_left(&spans, 8);
+        assert_eq!(shifted.len(), 1);
+        assert_eq!(shifted[0].start, 0);
+        assert_eq!(shifted[0].end, 4);
+        assert_eq!(shifted[0].rule, 1);
+        // Partial overlap: start before cut, end after.
+        let partial = shift_spans_left(
+            &[MatchSpan {
+                start: 2,
+                end: 10,
+                rule: 0,
+            }],
+            5,
+        );
+        assert_eq!(partial[0].start, 0);
+        assert_eq!(partial[0].end, 5);
+    }
 
     #[test]
     fn severity_bar_handles_zero_width_and_sparse_counts() {

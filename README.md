@@ -82,7 +82,9 @@ First moves once you're in:
 | `:`   | jump to a line number |
 | `f`   | filter down to only matching lines |
 | `m`   | bookmark the current line (`'` / `"` jump · `M` clear all) |
+| `←`/`→` | pan left / right across long lines (`0` resets) |
 | `y`   | copy the cursor line to the clipboard |
+| `Y`   | copy the current file path to the clipboard |
 | `?`   | full keybinding help |
 | `q`   | quit |
 
