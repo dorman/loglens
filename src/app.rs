@@ -380,6 +380,8 @@ pub struct App {
     pub scrollbar_drag: bool,
     pub status: Option<String>,
     pub should_quit: bool,
+    /// When set, the next `open_browser` flashes where we restored from prefs.
+    browser_cwd_hint: Option<PathBuf>,
     /// Active UI palette (dark theme).
     pub theme: Theme,
     /// Temp directories created while extracting zip bundles; removed on Drop.
@@ -422,6 +424,7 @@ impl App {
             scrollbar_drag: false,
             status: None,
             should_quit: false,
+            browser_cwd_hint: None,
             theme: Theme::dark(),
             temp_dirs: Vec::new(),
         };
@@ -1757,6 +1760,9 @@ impl App {
     }
 
     pub fn open_browser(&mut self) {
+        if let Some(dir) = self.browser_cwd_hint.take() {
+            self.status = Some(format!("browser restored: {}", dir.display()));
+        }
         self.browser.refresh();
         self.mode = Mode::Browser;
     }
@@ -1775,7 +1781,8 @@ impl App {
             return;
         };
         if dir.is_dir() {
-            self.browser = Browser::new(dir);
+            self.browser = Browser::new(dir.clone());
+            self.browser_cwd_hint = Some(dir);
         }
     }
 
@@ -3237,9 +3244,23 @@ mod tests {
         app2.restore_browser_cwd(loaded.browser_cwd);
         assert_eq!(app2.browser.cwd, browse);
 
+        // First open_browser after restore surfaces where we landed.
+        app2.open_browser();
+        assert!(
+            app2.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("browser restored:")
+        );
+        assert!(app2.browser_cwd_hint.is_none());
+        app2.status = None;
+        app2.open_browser();
+        assert!(app2.status.is_none());
+
         // Missing/invalid path is ignored.
         app2.restore_browser_cwd(Some(cfg_dir.join("does-not-exist")));
         assert_eq!(app2.browser.cwd, browse);
+        assert!(app2.browser_cwd_hint.is_none());
 
         // Pref toggles must keep browser_cwd.
         app2.toggle_legend();
