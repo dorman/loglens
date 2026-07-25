@@ -2541,10 +2541,7 @@ mod tests {
             app.status
         );
         assert!(
-            !app.status
-                .as_deref()
-                .unwrap_or("")
-                .contains("jumped to"),
+            !app.status.as_deref().unwrap_or("").contains("jumped to"),
             "must not claim a jump landed: {:?}",
             app.status
         );
