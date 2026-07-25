@@ -684,10 +684,19 @@ impl App {
         }
         self.rules = rebuilt;
         let case = if self.ignore_case { "on" } else { "off" };
+        let saved = crate::config::save(&crate::config::Config {
+            ignore_case: self.ignore_case,
+        });
+        let persist = match saved {
+            Ok(()) => " · saved".to_string(),
+            Err(_) => " · could not save pref".to_string(),
+        };
         let status = if dropped > 0 {
-            format!("case-insensitive: {case} ({dropped} rule(s) dropped — failed to recompile)")
+            format!(
+                "case-insensitive: {case}{persist} ({dropped} rule(s) dropped — failed to recompile)"
+            )
         } else {
-            format!("case-insensitive: {case}")
+            format!("case-insensitive: {case}{persist}")
         };
         self.begin_rescan(Some(status));
     }
@@ -2628,5 +2637,34 @@ mod tests {
         app.next_bookmark();
         assert!(!app.filter_on);
         assert_eq!(app.file().view[app.file().view_pos], marked);
+    }
+
+    #[test]
+    fn toggle_ignore_case_persists_preference() {
+        let dir = tmp_name("ic-pref");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: test-only env override; cleaned up before return.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        assert!(!app.ignore_case);
+        app.toggle_ignore_case();
+        assert!(app.ignore_case);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("case-insensitive: on")
+        );
+        let loaded = crate::config::load();
+        assert!(loaded.ignore_case);
+        app.toggle_ignore_case();
+        assert!(!app.ignore_case);
+        assert!(!crate::config::load().ignore_case);
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 }

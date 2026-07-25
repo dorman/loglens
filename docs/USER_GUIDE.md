@@ -237,7 +237,7 @@ legend panel on the right with a live match count.
 | `a` | add a **keyword** highlight (literal text; type it, `Enter`) |
 | `r` | add a **regex** highlight (e.g. `error \d{4}` or `powershell\.exe.*-enc`) |
 | `x` | remove the most recently added highlight |
-| `i` | toggle case-insensitive matching for **all** rules |
+| `i` | toggle case-insensitive matching for **all** rules (saved to `~/.config/loglens/config`) |
 | `l` | show/hide the legend panel |
 
 Click a highlight in the legend to jump to its next match; keep clicking to
@@ -303,7 +303,7 @@ Press `?` in the app for this list any time.
 
 **Search & filter** — `/` search · `f` filter · `Esc` clear search
 
-**Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case ·
+**Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend
 
 **File browser** — `Enter`/`l` open/enter · `h` parent · `Space` mark ·
@@ -322,9 +322,15 @@ loglens [OPTIONS] [FILES]...
 | `[FILES]...` | files, folders, or `.zip` archives to open (folders/zips recurse) |
 | `-k, --keyword <KEYWORD>` | literal keyword highlight; repeatable or comma-separated (`-k "timeout,rollback"`) |
 | `-r, --regex <PATTERN>` | regex highlight; repeatable |
-| `-i, --ignore-case` | case-insensitive matching for all rules |
+| `-i, --ignore-case` | case-insensitive matching for all rules (this session; also OR'd with the saved `i` preference) |
 | `--version` | print version |
 | `--help` | print CLI help |
+
+Preferences: pressing `i` in the TUI writes `ignore_case=true|false` to
+`~/.config/loglens/config` (or `$XDG_CONFIG_HOME/loglens/config` /
+`%APPDATA%\loglens\config` on Windows). Override the directory with
+`LOGLENS_CONFIG_DIR`. The next launch restores that setting unless you pass
+`-i` (which forces on for the session).
 
 Example — open a bundle with a standing rule set:
 

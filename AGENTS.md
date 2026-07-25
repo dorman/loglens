@@ -52,6 +52,7 @@ restore terminal (panic hook also clears mouse/paste).
 | `theme.rs` | Dark palette + level-tint tokens; panel chrome (no theme cycling) |
 | `browser.rs` | In-TUI filesystem browser (mark / open / recursive `O`) |
 | `clipboard.rs` | OSC-52 yank helpers (`copy_text`) |
+| `config.rs` | Tiny `~/.config/loglens` prefs (ignore-case persistence) |
 
 Hot paths worth knowing:
 - **Open** → `ingest::resolve` → `LogFile::load` / `rescan` → rebuild filtered view

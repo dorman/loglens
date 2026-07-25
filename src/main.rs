@@ -2,6 +2,7 @@ mod app;
 mod browser;
 mod cli;
 mod clipboard;
+mod config;
 mod event;
 mod ingest;
 mod rules;
@@ -30,8 +31,12 @@ fn disable_extra_modes() {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let theme = theme::Theme::dark();
-    let rules = rules::build_rules(&cli, &theme)?;
-    let mut app = App::new(&cli.files, rules, cli.ignore_case)?;
+    // `-i` always enables for this session; otherwise honour the saved pref
+    // written when the user presses `i` in the TUI.
+    let prefs = config::load();
+    let ignore_case = cli.ignore_case || prefs.ignore_case;
+    let rules = rules::build_rules(&cli, &theme, ignore_case)?;
+    let mut app = App::new(&cli.files, rules, ignore_case)?;
 
     // ratatui::init() panics when stdout is not a TTY; fail with a clear message
     // instead so CI / pipes / non-interactive shells get a usable exit status.

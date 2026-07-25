@@ -74,7 +74,7 @@ pub fn compile_rule(
     })
 }
 
-pub fn build_rules(cli: &Cli, theme: &Theme) -> Result<Vec<Rule>> {
+pub fn build_rules(cli: &Cli, theme: &Theme, ignore_case: bool) -> Result<Vec<Rule>> {
     let mut rules = Vec::new();
 
     for kw in &cli.keywords {
@@ -88,7 +88,7 @@ pub fn build_rules(cli: &Cli, theme: &Theme) -> Result<Vec<Rule>> {
         rules.push(compile_rule(
             kw,
             false,
-            cli.ignore_case,
+            ignore_case,
             rules.len(),
             theme,
         )?);
@@ -101,7 +101,7 @@ pub fn build_rules(cli: &Cli, theme: &Theme) -> Result<Vec<Rule>> {
         rules.push(compile_rule(
             pat,
             true,
-            cli.ignore_case,
+            ignore_case,
             rules.len(),
             theme,
         )?);
@@ -169,7 +169,7 @@ mod tests {
             "-i",
         ])
         .unwrap();
-        let rules = build_rules(&cli, &dark()).unwrap();
+        let rules = build_rules(&cli, &dark(), cli.ignore_case).unwrap();
         let labels: Vec<_> = rules.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["ERROR", "timeout", "rollback"]);
         assert!(cli.ignore_case);
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn cli_invalid_regex_fails_build_rules() {
         let cli = Cli::try_parse_from(["loglens", "-r", "("]).unwrap();
-        match build_rules(&cli, &dark()) {
+        match build_rules(&cli, &dark(), false) {
             Ok(_) => panic!("invalid regex should fail"),
             Err(e) => {
                 let err = e.to_string();
@@ -195,6 +195,6 @@ mod tests {
             args.push(format!("kw{i}"));
         }
         let cli = Cli::try_parse_from(&args).unwrap();
-        assert!(build_rules(&cli, &dark()).is_err());
+        assert!(build_rules(&cli, &dark(), false).is_err());
     }
 }
