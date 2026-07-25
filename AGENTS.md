@@ -19,8 +19,51 @@ Standard commands (also documented in `README.md` "Development"):
   Release binaries (`.github/workflows/release.yml`); publish to crates.io
   separately only when intentionally cutting that release.
 
+### CI & release
+- **PR/CI** (`.github/workflows/rust.yml`): push/PR to `master`; matrix
+  `ubuntu-latest` / `macos-latest` / `windows-latest`; steps are
+  `fmt --check`, `clippy -D warnings`, `cargo test`, release build, and
+  (Unix only) `cargo install --path . --force --locked` + `--version`/`--help`.
+- **Tagged release** (`.github/workflows/release.yml`): push `v*` (or
+  `workflow_dispatch` with a tag). Builds
+  `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+  `x86_64-pc-windows-msvc`; archives include the binary + `README.md` +
+  `LICENSE`. CI does **not** publish to crates.io.
+- **`scripts/install.sh`**: Linux/macOS helper that curls the latest GitHub
+  Release asset into `PREFIX`/`BIN_DIR` (default `/usr/local/bin`). Needs a
+  published release; not for Windows. Distinguishes HTTP 404 (no release yet)
+  from other API failures; both point at source install as fallback.
+  Maintainer tag steps live in `docs/USER_GUIDE.md` — do not duplicate them here.
+
+### Code map
+Startup wiring (`src/main.rs`): `Cli::parse` → `Theme::dark()` + `rules::build_rules`
+→ `App::new` → enable mouse/bracketed paste → `event::run` ⇄ `ui::draw` →
+restore terminal (panic hook also clears mouse/paste).
+
+| Module | Role |
+| ------ | ---- |
+| `cli.rs` | clap: files, `-k`/`-r`/`-i` |
+| `app.rs` | State: tabs/files, rules, search/filter, scan, status, open caps, hit-test regions |
+| `event.rs` | Modes `Viewer` / `Browser` / `Input`; keys/mouse; scan chunking (`SCAN_CHUNK`); paste only in Input |
+| `ui.rs` | Layout: tabs, log+gutter, legend, lean status, welcome / browser / findings / help / input |
+| `ingest.rs` | Resolve file/dir/zip → `LoadTarget`s (+ temp dir for zips); collect caps |
+| `rules.rs` | Compile keyword/regex highlights with size/nest budgets |
+| `signatures.rs` | Built-in Medium–Critical scan library (no catch-all ERROR/WARN) |
+| `theme.rs` | Dark palette + level-tint tokens; panel chrome (no theme cycling) |
+| `browser.rs` | In-TUI filesystem browser (mark / open / recursive `O`) |
+| `clipboard.rs` | OSC-52 yank helpers (`copy_text`) |
+
+Hot paths worth knowing:
+- **Open** → `ingest::resolve` → `LogFile::load` / `rescan` → rebuild filtered view
+- **Scan** → `begin_scan` then `scan_step` chunks so the UI stays responsive; cancel clears gutter dots
+
+Safety/resource caps (50 MiB logs, zip extract budgets, 250k lines/file, 64
+rules, 10k findings, …) are documented for operators in
+`docs/USER_GUIDE.md` → "Limits & safety". Constants live beside the enforcing
+code in `ingest.rs` / `app.rs` / `rules.rs` — prefer updating both together.
+
 ### Running the TUI (non-obvious)
 - `loglens` is a full-screen interactive TUI using crossterm raw mode + alternate screen and mouse capture. It requires a real TTY; it does not run headless. To demo it in cloud, run it inside a terminal emulator via computer use, not by piping stdin.
 - Useful sample data lives in `samples/` (`sample.log`, `big.log`, `network.log`, `bundle/`, `bundle.zip`).
-- Key first moves once open: `S` scan for known-bad signatures, `a` add keyword highlight, `/` search, `f` filter, `?` help, `q` quit.
+- Key first moves once open: `S` scan for known-bad signatures, `a` add keyword highlight, `/` search, `f` filter, `:` go to line, `m` bookmark, `y` yank, `e` export findings, `?` help, `q` quit.
 - CLI-only smoke checks that work without a TTY: `loglens --version` and `loglens --help`.
