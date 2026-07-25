@@ -3084,7 +3084,9 @@ mod tests {
     #[test]
     fn toggle_filter_reports_when_cursor_line_is_hidden() {
         let mut app = app_with_paths(&["samples/sample.log"]);
-        // Sit on a non-ERROR line, then filter to ERROR so that line disappears.
+        // set_search jumps to the first match — place the cursor on a non-match
+        // afterwards so turning filter on actually hides that line.
+        app.set_search("ERROR");
         let non_error = app
             .file()
             .lines
@@ -3092,7 +3094,6 @@ mod tests {
             .position(|l| !l.to_lowercase().contains("error"))
             .expect("sample.log should have a non-ERROR line");
         app.file_mut().view_pos = non_error;
-        app.set_search("ERROR");
         app.toggle_filter();
         assert!(app.filter_on);
         assert!(
@@ -3125,6 +3126,7 @@ mod tests {
         // Empty match set names the vacated line.
         app.toggle_filter(); // off
         app.set_search("this-will-not-match-zzzz");
+        // set_search leaves the view unfiltered; park on absolute line 0.
         app.file_mut().view_pos = 0;
         app.toggle_filter();
         assert!(app.file().view.is_empty());
