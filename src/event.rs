@@ -271,6 +271,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
             KeyCode::Char('j') | KeyCode::Down => app.findings_move(1),
             KeyCode::Char('k') | KeyCode::Up => app.findings_move(-1),
+            KeyCode::Char('p') => app.next_finding(),
+            KeyCode::Char('P') => app.prev_finding(),
             KeyCode::Enter => app.findings_jump(),
             KeyCode::Char('e') => app.export_findings(),
             _ => {}
@@ -313,6 +315,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         // Scan for known-bad signatures. Lowercase `s` reopens the last panel.
         KeyCode::Char('S') => app.begin_scan(),
         KeyCode::Char('s') => app.toggle_findings(),
+        KeyCode::Char('p') => app.next_finding(),
+        KeyCode::Char('P') => app.prev_finding(),
         KeyCode::Char('e') => app.export_findings(),
         // Go to absolute line number (1-based), like less/vim.
         KeyCode::Char(':') => {
@@ -517,6 +521,45 @@ mod tests {
         );
         // Clean up default cwd export if the keybinding wrote it.
         let _ = std::fs::remove_file("loglens-findings.md");
+    }
+
+    #[test]
+    fn findings_keys_next_prev_without_panel() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+
+        app.begin_scan();
+        for _ in 0..10_000 {
+            if app.scan_step(10_000) {
+                break;
+            }
+        }
+        assert!(app.findings.len() >= 2);
+        assert!(app.show_findings);
+
+        // From the open panel, `p` jumps to the selection and closes.
+        handle_viewer(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        assert!(!app.show_findings);
+        assert_eq!(app.findings_sel, 0);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("finding 1/"),
+            "unexpected status: {:?}",
+            app.status
+        );
+
+        handle_viewer(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(app.findings_sel, 1);
+        handle_viewer(&mut app, KeyCode::Char('P'), KeyModifiers::NONE);
+        assert_eq!(app.findings_sel, 0);
     }
 
     #[test]

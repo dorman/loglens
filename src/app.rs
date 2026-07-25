@@ -1475,6 +1475,56 @@ impl App {
         self.findings_sel = (self.findings_sel as isize + delta).clamp(0, n - 1) as usize;
     }
 
+    /// Jump to the next scan finding in severity-ranked order (wraps).
+    /// Stays in the viewer — no need to open the findings panel.
+    pub fn next_finding(&mut self) {
+        self.step_finding(1);
+    }
+
+    /// Jump to the previous scan finding (wraps; see [`Self::next_finding`]).
+    pub fn prev_finding(&mut self) {
+        self.step_finding(-1);
+    }
+
+    /// Walk findings by list index. If the cursor is already on the selected
+    /// finding, advance/retreat with wrap; otherwise jump to the selection
+    /// first (so the first `p` after a scan lands on finding 1/n).
+    fn step_finding(&mut self, dir: isize) {
+        if self.findings.is_empty() {
+            self.status = Some("no findings — press S to scan".into());
+            return;
+        }
+        let n = self.findings.len();
+        let selected = self.findings[self.findings_sel];
+        let on_selected = self.current == selected.file
+            && self.file().view.get(self.file().view_pos).copied() == Some(selected.line);
+        if on_selected {
+            self.findings_sel = if dir > 0 {
+                (self.findings_sel + 1) % n
+            } else {
+                (self.findings_sel + n - 1) % n
+            };
+        }
+        let f = self.findings[self.findings_sel];
+        self.show_findings = false;
+        self.jump_to_line(f.file, f.line);
+        let sig = &self.signatures[f.sig];
+        let name = self
+            .files
+            .get(f.file)
+            .map(|file| file.name.as_str())
+            .unwrap_or("?");
+        self.status = Some(format!(
+            "finding {}/{} · {} · {} · {}:{}",
+            self.findings_sel + 1,
+            n,
+            sig.severity.label(),
+            sig.title,
+            name,
+            f.line + 1
+        ));
+    }
+
     /// Jump to the selected finding and close the panel.
     pub fn findings_jump(&mut self) {
         if let Some(f) = self.findings.get(self.findings_sel).copied() {
@@ -2025,6 +2075,60 @@ mod tests {
         let counts = app.severity_counts();
         assert_eq!(counts[Severity::Info as usize], 0);
         assert_eq!(counts[Severity::Low as usize], 0);
+    }
+
+    #[test]
+    fn next_prev_finding_walks_ranked_list_with_wrap() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.next_finding();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+
+        run_scan_to_completion(&mut app);
+        let n = app.findings.len();
+        assert!(n >= 2, "sample.log should yield multiple findings");
+        app.close_findings();
+
+        // First press lands on the selected finding (index 0 after scan).
+        let first = app.findings[0];
+        app.next_finding();
+        assert!(!app.show_findings);
+        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.current, first.file);
+        assert_eq!(app.file().view[app.file().view_pos], first.line);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("finding 1/"),
+            "status should report position: {:?}",
+            app.status
+        );
+
+        // Second press advances; from the last finding, wrap back to first.
+        app.next_finding();
+        assert_eq!(app.findings_sel, 1);
+        app.findings_sel = n - 1;
+        app.findings_jump();
+        app.next_finding();
+        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.file().view[app.file().view_pos], app.findings[0].line);
+
+        // prev from first wraps to last.
+        app.prev_finding();
+        assert_eq!(app.findings_sel, n - 1);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains(&format!("finding {n}/{n}")),
+            "status should show last finding: {:?}",
+            app.status
+        );
     }
 
     #[test]

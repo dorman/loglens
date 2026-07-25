@@ -1030,6 +1030,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
         Line::from("  s               reopen last findings panel (no rescan)"),
+        Line::from("  p / P           next / previous finding (wraps; no panel)"),
         Line::from("  e               export findings to loglens-findings.md"),
         Line::from("  (in panel)      j/k move · Enter jump · e export · q close"),
         Line::from(""),
