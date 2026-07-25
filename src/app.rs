@@ -135,6 +135,9 @@ pub struct LogFile {
     pub view_pos: usize,
     /// Index into `view` of the first visible row.
     pub top: usize,
+    /// Horizontal scroll offset in Unicode scalar values (columns of text).
+    /// Long lines are clipped by the terminal; Left/Right pan the visible slice.
+    pub h_scroll: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
     /// Bookmarked absolute line indices (sorted, unique). Toggle with `m`.
@@ -176,6 +179,7 @@ impl LogFile {
             view: Vec::new(),
             view_pos: 0,
             top: 0,
+            h_scroll: 0,
             scan_severity: vec![None; line_count],
             bookmarks: Vec::new(),
             truncated,
@@ -993,6 +997,27 @@ impl App {
 
     pub fn page_up(&mut self) {
         self.move_cursor(-(self.viewport_height.max(1) as isize));
+    }
+
+    /// Pan the log pane horizontally by `delta` columns (Unicode scalars).
+    /// Positive = right (reveal more of long lines); negative = left toward col 0.
+    pub fn scroll_horiz(&mut self, delta: isize) {
+        if !self.has_files() {
+            return;
+        }
+        let f = self.file_mut();
+        let next = (f.h_scroll as isize + delta).max(0) as usize;
+        // Soft cap so a held key cannot push the offset into absurd territory.
+        const MAX_H_SCROLL: usize = 10_000;
+        f.h_scroll = next.min(MAX_H_SCROLL);
+    }
+
+    /// Jump horizontal scroll back to column 0.
+    pub fn reset_h_scroll(&mut self) {
+        if !self.has_files() {
+            return;
+        }
+        self.file_mut().h_scroll = 0;
     }
 
     pub fn go_top(&mut self) {
@@ -2470,6 +2495,29 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before copying")
         );
+    }
+
+    #[test]
+    fn scroll_horiz_pans_and_clamps_at_zero() {
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        assert_eq!(app.file().h_scroll, 0);
+        app.scroll_horiz(-8);
+        assert_eq!(app.file().h_scroll, 0);
+        app.scroll_horiz(8);
+        assert_eq!(app.file().h_scroll, 8);
+        app.scroll_horiz(4);
+        assert_eq!(app.file().h_scroll, 12);
+        app.reset_h_scroll();
+        assert_eq!(app.file().h_scroll, 0);
+    }
+
+    #[test]
+    fn scroll_horiz_without_files_is_noop() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.scroll_horiz(8);
+        app.reset_h_scroll();
+        // No panic, no files to inspect.
+        assert!(!app.has_files());
     }
 
     #[test]

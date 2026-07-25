@@ -161,6 +161,8 @@ Navigation:
 | Key | Action |
 | --- | ------ |
 | `j` / `k`, `↓` / `↑` | one line down / up |
+| `←` / `→` | pan left / right by 8 columns (long lines that clip at the edge) |
+| `0` | reset horizontal scroll to column 1 |
 | `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
 | `:` | go to line number (1-based; clamps past the end) |
@@ -173,9 +175,10 @@ The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
 The status bar stays short on purpose: absolute line (`L42/1200`), highlight
-count, filter/search state, truncation hint, bookmark count (when any), and
-cached finding count (`N fd` after a scan) — full keybindings live behind `?`.
-Press `:` to jump straight to a line number.
+count, filter/search state, truncation hint, bookmark count (when any),
+horizontal column (`col N` when panned), and cached finding count (`N fd`
+after a scan) — full keybindings live behind `?`. Press `:` to jump straight
+to a line number.
 
 Log lines are soft-tinted by level tokens even before you add highlights
 (`ERROR` / `ERR` / `FATAL` / `CRITICAL` / `CRIT`, `WARN` / `WARNING`,
@@ -293,10 +296,11 @@ input prompt, never interpreted as keystrokes.
 
 Press `?` in the app for this list any time.
 
-**Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`:` go to line · `m` bookmark · `'`/`"` next/prev bookmark ·
-`n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`o` file browser · `w` close file · `y` copy cursor line · `q` quit
+**Viewer** — `j`/`k` scroll · `←`/`→` pan · `0` reset pan ·
+`Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom · `:` go to line ·
+`m` bookmark · `'`/`"` next/prev bookmark · `n`/`N` next/prev match ·
+`Tab`/`]` next file · `Shift-Tab`/`[` prev file · `o` file browser ·
+`w` close file · `y` copy cursor line · `q` quit
 
 **Scan** — `S` scan · `s` reopen findings · `e` export markdown · in panel:
 `j`/`k` move, `Enter` jump, `e` export, `q`/`Esc` close

@@ -289,6 +289,12 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char('j') | KeyCode::Down => app.move_cursor(1),
         KeyCode::Char('k') | KeyCode::Up => app.move_cursor(-1),
+        // Pan long lines horizontally (step of 8 columns). `0` resets to col 0.
+        // Left/Right are free in the viewer; the file browser reuses them for
+        // directory navigation instead.
+        KeyCode::Left => app.scroll_horiz(-8),
+        KeyCode::Right => app.scroll_horiz(8),
+        KeyCode::Char('0') => app.reset_h_scroll(),
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
         KeyCode::PageDown => app.page_down(),
@@ -427,6 +433,19 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before copying")
         );
+    }
+
+    #[test]
+    fn viewer_arrows_pan_horizontally_and_zero_resets() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 8);
+        handle_viewer(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 16);
+        handle_viewer(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 8);
+        handle_viewer(&mut app, KeyCode::Char('0'), KeyModifiers::NONE);
+        assert_eq!(app.file().h_scroll, 0);
     }
 
     #[test]
