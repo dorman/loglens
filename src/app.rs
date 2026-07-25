@@ -732,6 +732,16 @@ impl App {
         }
     }
 
+    /// Turn filter mode off (used by Esc: search → filter → quit).
+    pub fn clear_filter(&mut self) {
+        if self.filter_on {
+            self.filter_on = false;
+            self.rebuild_views();
+            self.ensure_cursor_visible();
+            self.status = Some("filter cleared".into());
+        }
+    }
+
     pub fn toggle_filter(&mut self) {
         self.filter_on = !self.filter_on;
         self.rebuild_views();

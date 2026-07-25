@@ -1031,8 +1031,9 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  (in panel)      j/k move · Enter jump · e export · q close"),
         Line::from(""),
         head("Search & filter"),
-        Line::from("  /               search (n/N walk results, Esc clears)"),
+        Line::from("  /               search (n/N walk results)"),
         Line::from("  f               filter: show only matching lines"),
+        Line::from("  Esc             clear search → clear filter → quit"),
         Line::from(""),
         head("Highlights"),
         Line::from("  a / r           add keyword / regex highlight"),
@@ -1047,12 +1048,12 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  h / .           parent dir / toggle hidden"),
         Line::from(""),
         Line::from(Span::styled(
-            "  ? close help    q quit",
+            "  ?/q/Esc close help",
             Style::default().fg(t.text_dim),
         )),
     ];
     let block = t
-        .panel(" Help (? to close) ", true)
+        .panel(" Help (?/q/Esc to close) ", true)
         .title_alignment(Alignment::Center);
     frame.render_widget(Clear, popup);
     frame.render_widget(

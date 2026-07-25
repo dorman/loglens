@@ -257,7 +257,12 @@ fn handle_browser(app: &mut App, code: KeyCode) {
 
 fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if app.show_help {
-        if matches!(code, KeyCode::Char('?') | KeyCode::Esc) {
+        // Footer advertises q; treat it like ?/Esc so it closes the overlay
+        // instead of being swallowed with no effect.
+        if matches!(
+            code,
+            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc
+        ) {
             app.toggle_help();
         }
         return;
@@ -279,10 +284,13 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 
     match code {
         KeyCode::Char('q') => app.should_quit = true,
-        // Esc backs out of an active search first, then quits.
+        // Esc backs out of search, then filter, then quits — same “peel one
+        // layer” pattern as every other Esc binding in the TUI.
         KeyCode::Esc => {
             if app.search.is_some() {
                 app.clear_search();
+            } else if app.filter_on {
+                app.clear_filter();
             } else {
                 app.should_quit = true;
             }
@@ -612,6 +620,39 @@ mod tests {
         assert!(!app.should_quit);
         handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn esc_clears_filter_before_quit() {
+        let mut app = app_with_sample();
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("error".chars());
+        app.confirm_input();
+        handle_viewer(&mut app, KeyCode::Char('f'), KeyModifiers::NONE);
+        assert!(app.filter_on);
+        // First Esc clears search; filter stays on.
+        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.search.is_none());
+        assert!(app.filter_on);
+        assert!(!app.should_quit);
+        // Second Esc clears filter.
+        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(!app.filter_on);
+        assert!(!app.should_quit);
+        assert_eq!(app.status.as_deref(), Some("filter cleared"));
+        // Third Esc finally quits.
+        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn help_q_closes_overlay_without_quitting() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        assert!(app.show_help);
+        handle_viewer(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(!app.show_help);
+        assert!(!app.should_quit);
     }
 
     #[test]

@@ -255,8 +255,9 @@ with size/nest budgets so a pathological pattern cannot hang the TUI.
 
 | Key | Action |
 | --- | ------ |
-| `/` | search (case-insensitive, literal text). `n`/`N` walk results, `Esc` clears |
+| `/` | search (case-insensitive, literal text). `n`/`N` walk results |
 | `f` | **filter mode** — collapse the view to only matching lines |
+| `Esc` | clear search → clear filter → quit (peels one layer at a time) |
 
 Filter mode is the biggest time-saver in the tool:
 
@@ -265,7 +266,7 @@ Filter mode is the biggest time-saver in the tool:
 
 Either way, original line numbers are preserved, so a 10,000-line log
 becomes the 40 lines worth reading without losing your place. Press `f`
-again to restore the full view.
+again (or `Esc` once search is cleared) to restore the full view.
 
 Search matches render with a bright white highlight, layered on top of any
 keyword colors.
@@ -302,7 +303,7 @@ Press `?` in the app for this list any time.
 **Scan** — `S` scan · `s` reopen findings · `e` export markdown · in panel:
 `j`/`k` move, `Enter` jump, `e` export, `q`/`Esc` close
 
-**Search & filter** — `/` search · `f` filter · `Esc` clear search
+**Search & filter** — `/` search · `f` filter · `Esc` clear search → clear filter → quit
 
 **Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend
