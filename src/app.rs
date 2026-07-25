@@ -1048,6 +1048,26 @@ impl App {
         }
     }
 
+    /// Clear every bookmark on the current file.
+    pub fn clear_bookmarks(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before clearing bookmarks".into());
+            return;
+        }
+        let f = self.file_mut();
+        let n = f.bookmarks.len();
+        if n == 0 {
+            self.status = Some("no bookmarks to clear".into());
+            return;
+        }
+        f.bookmarks.clear();
+        self.status = Some(if n == 1 {
+            "cleared 1 bookmark".into()
+        } else {
+            format!("cleared {n} bookmarks")
+        });
+    }
+
     /// Jump to the next bookmarked line (wraps). Clears filter if needed.
     pub fn next_bookmark(&mut self) {
         self.jump_bookmark(1);

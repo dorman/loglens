@@ -165,6 +165,7 @@ Navigation:
 | `g` / `G`, `Home` / `End` | top / bottom |
 | `:` | go to line number (1-based; clamps past the end) |
 | `m` | toggle a bookmark on the current line |
+| `M` | clear all bookmarks on the current file |
 | `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
 | `y` | copy the cursor line to the system clipboard (OSC-52) |
 | `n` / `N` | next / previous match (highlights, or search results while searching) |
@@ -173,9 +174,9 @@ The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
 The status bar stays short on purpose: absolute line (`L42/1200`), highlight
-count, filter/search state, truncation hint, bookmark count (when any), and
-cached finding count (`N fd` after a scan) — full keybindings live behind `?`.
-Press `:` to jump straight to a line number.
+count, filter/search state, truncation hint, ignore-case (`ic` when on),
+bookmark count (when any), and cached finding count (`N fd` after a scan) —
+full keybindings live behind `?`. Press `:` to jump straight to a line number.
 
 Log lines are soft-tinted by level tokens even before you add highlights
 (`ERROR` / `ERR` / `FATAL` / `CRITICAL` / `CRIT`, `WARN` / `WARNING`,
@@ -294,7 +295,7 @@ input prompt, never interpreted as keystrokes.
 Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
-`:` go to line · `m` bookmark · `'`/`"` next/prev bookmark ·
+`:` go to line · `m` bookmark · `M` clear bookmarks · `'`/`"` next/prev bookmark ·
 `n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
 `o` file browser · `w` close file · `y` copy cursor line · `q` quit
 

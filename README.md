@@ -80,7 +80,7 @@ First moves once you're in:
 | `/`   | search |
 | `:`   | jump to a line number |
 | `f`   | filter down to only matching lines |
-| `m`   | bookmark the current line (`'` / `"` jump between marks) |
+| `m`   | bookmark the current line (`'` / `"` jump · `M` clear all) |
 | `y`   | copy the cursor line to the clipboard |
 | `?`   | full keybinding help |
 | `q`   | quit |

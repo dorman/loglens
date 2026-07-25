@@ -650,6 +650,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             String::new()
         };
         let trunc = if file.truncated { " · trunc" } else { "" };
+        let ic = if app.ignore_case { " · ic" } else { "" };
         let search = match &app.search {
             Some(s) => {
                 let raw: String = s.raw.chars().take(20).collect();
@@ -675,7 +676,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         };
         Line::from(vec![Span::styled(
             format!(
-                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{search}{bookmarks}{findings}  ·  ? help"
+                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{ic}{search}{bookmarks}{findings}  ·  ? help"
             ),
             base,
         )])
@@ -1011,6 +1012,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  g / G           jump to top / bottom"),
         Line::from("  :               go to line number"),
         Line::from("  m               toggle bookmark on current line"),
+        Line::from("  M               clear all bookmarks on this file"),
         Line::from("  ' / \"           next / previous bookmark"),
         Line::from("  n / N           next / previous match"),
         Line::from("  Tab / ]         next open file"),
