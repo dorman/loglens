@@ -32,17 +32,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.scanning() {
         draw_scan_progress(frame, app, area);
+    } else if app.rescanning() {
+        draw_rescan_progress(frame, app, area);
     }
 }
 
-fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let frac = app.scan_fraction().unwrap_or(0.0);
-    let (processed, total, found, file_name) =
-        app.scan_detail().unwrap_or((0, 0, 0, String::new()));
-
+fn draw_work_progress(
+    frame: &mut Frame,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    frac: f64,
+    info: Line<'static>,
+    file_name: &str,
+) {
     let rect = centered_rect_lines(area, 56, 6);
-    let block = t.panel(" Scanning for known-bad signatures… ", true);
+    let block = theme.panel(title, true);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
@@ -58,10 +63,24 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
 
     let pct = (frac * 100.0).round() as u16;
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(t.accent).bg(t.cursor_bg))
+        .gauge_style(Style::default().fg(theme.accent).bg(theme.cursor_bg))
         .ratio(frac.clamp(0.0, 1.0))
         .label(format!("{pct}%"));
     frame.render_widget(gauge, rows[0]);
+    frame.render_widget(Paragraph::new(info), rows[1]);
+
+    let sub = Line::from(vec![
+        Span::styled(format!(" {file_name}"), dim(theme)),
+        Span::styled("      Esc to cancel", dim(theme)),
+    ]);
+    frame.render_widget(Paragraph::new(sub), rows[2]);
+}
+
+fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let frac = app.scan_fraction().unwrap_or(0.0);
+    let (processed, total, found, file_name) =
+        app.scan_detail().unwrap_or((0, 0, 0, String::new()));
 
     let info = Line::from(vec![
         Span::styled(
@@ -74,13 +93,43 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(t.accent),
         ),
     ]);
-    frame.render_widget(Paragraph::new(info), rows[1]);
+    draw_work_progress(
+        frame,
+        t,
+        area,
+        " Scanning for known-bad signatures… ",
+        frac,
+        info,
+        &file_name,
+    );
+}
 
-    let sub = Line::from(vec![
-        Span::styled(format!(" {file_name}"), dim(t)),
-        Span::styled("      Esc to cancel", dim(t)),
+fn draw_rescan_progress(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let frac = app.rescan_fraction().unwrap_or(0.0);
+    let (processed, total, file_name) = app.rescan_detail().unwrap_or((0, 0, String::new()));
+    let n_rules = app.rules.len();
+
+    let info = Line::from(vec![
+        Span::styled(
+            format!(" {processed}/{total} lines"),
+            Style::default().fg(t.text),
+        ),
+        Span::styled("   ·   ", dim(t)),
+        Span::styled(
+            format!("{n_rules} highlight rule(s)"),
+            Style::default().fg(t.accent),
+        ),
     ]);
-    frame.render_widget(Paragraph::new(sub), rows[2]);
+    draw_work_progress(
+        frame,
+        t,
+        area,
+        " Updating highlights… ",
+        frac,
+        info,
+        &file_name,
+    );
 }
 
 /// A one-line stacked bar depicting the severity mix of the findings.
@@ -1047,5 +1096,23 @@ mod tests {
         let out = render_line_spans("2026 ERROR failed", &[], &[], None, &theme);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].style.fg, Some(theme.level_error));
+    }
+
+    #[test]
+    fn render_line_spans_handles_replacement_chars_from_sanitized_ansi() {
+        let theme = Theme::dark();
+        // After sanitize_log_line, ESC sequences become U+FFFD — rendering must
+        // stay panic-free and preserve surrounding text.
+        let text = "ERROR \u{FFFD}[31mred\u{FFFD}[0m failed";
+        let rule = rules::compile_rule("ERROR", false, false, 0, &theme).unwrap();
+        let spans = [MatchSpan {
+            start: 0,
+            end: 5,
+            rule: 0,
+        }];
+        let out = render_line_spans(text, &spans, &[rule], None, &theme);
+        let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, text);
+        assert!(!joined.contains('\u{1b}'));
     }
 }

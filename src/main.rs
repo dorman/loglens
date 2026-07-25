@@ -8,9 +8,9 @@ mod signatures;
 mod theme;
 mod ui;
 
-use std::io;
+use std::io::{self, IsTerminal};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -31,6 +31,15 @@ fn main() -> Result<()> {
     let theme = theme::Theme::dark();
     let rules = rules::build_rules(&cli, &theme)?;
     let mut app = App::new(&cli.files, rules, cli.ignore_case)?;
+
+    // ratatui::init() panics when stdout is not a TTY; fail with a clear message
+    // instead so CI / pipes / non-interactive shells get a usable exit status.
+    if !io::stdout().is_terminal() {
+        bail!(
+            "loglens needs an interactive terminal (TTY).\n\
+             Open a real terminal, or try: loglens --help / loglens --version"
+        );
+    }
 
     let mut terminal = ratatui::init();
     let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
