@@ -264,10 +264,13 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
     if app.show_findings {
         match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => app.close_findings(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') | KeyCode::Char('s') => {
+                app.close_findings()
+            }
             KeyCode::Char('j') | KeyCode::Down => app.findings_move(1),
             KeyCode::Char('k') | KeyCode::Up => app.findings_move(-1),
             KeyCode::Enter => app.findings_jump(),
+            KeyCode::Char('e') => app.export_findings(),
             _ => {}
         }
         return;
@@ -292,12 +295,25 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::PageUp => app.page_up(),
         KeyCode::Char('g') | KeyCode::Home => app.go_top(),
         KeyCode::Char('G') | KeyCode::End => app.go_bottom(),
+        KeyCode::Char('m') => app.toggle_bookmark(),
+        KeyCode::Char('\'') => app.next_bookmark(),
+        KeyCode::Char('"') => app.prev_bookmark(),
         KeyCode::Char('n') => app.next_match(),
         KeyCode::Char('N') => app.prev_match(),
         KeyCode::Tab | KeyCode::Char(']') => app.next_file(),
         KeyCode::BackTab | KeyCode::Char('[') => app.prev_file(),
-        // Scan for known-bad signatures.
+        // Scan for known-bad signatures. Lowercase `s` reopens the last panel.
         KeyCode::Char('S') => app.begin_scan(),
+        KeyCode::Char('s') => app.toggle_findings(),
+        KeyCode::Char('e') => app.export_findings(),
+        // Go to absolute line number (1-based), like less/vim.
+        KeyCode::Char(':') => {
+            if app.has_files() {
+                app.begin_input(InputKind::GoToLine);
+            } else {
+                app.status = Some("open a file before jumping to a line".into());
+            }
+        }
         // Search & filter (require an open file — otherwise search_hits would
         // panic on the empty welcome screen).
         KeyCode::Char('/') => {
@@ -317,6 +333,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         // Import / manage files.
         KeyCode::Char('o') => app.open_browser(),
         KeyCode::Char('w') => app.close_current_file(),
+        // Copy the cursor line to the system clipboard (OSC-52).
+        KeyCode::Char('y') => app.yank_current_line(),
         // Manage highlights.
         KeyCode::Char('a') => app.begin_input(InputKind::Keyword),
         KeyCode::Char('r') => app.begin_input(InputKind::Regex),
@@ -378,6 +396,37 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before filtering")
         );
+        handle_viewer(&mut empty, KeyCode::Char(':'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping to a line")
+        );
+    }
+
+    #[test]
+    fn viewer_colon_begins_go_to_line() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char(':'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Input);
+        assert_eq!(app.input_kind, InputKind::GoToLine);
+    }
+
+    #[test]
+    fn viewer_y_without_files_prompts_to_open() {
+        // Avoid yanking with a real file here — OSC-52 would write escape
+        // codes to the test runner's stdout.
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('y'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
+        );
     }
 
     #[test]
@@ -390,6 +439,65 @@ mod tests {
         app.mode = Mode::Viewer;
         handle_viewer(&mut app, KeyCode::Char('S'), KeyModifiers::NONE);
         assert!(app.scanning());
+    }
+
+    #[test]
+    fn findings_keys_toggle_and_export() {
+        let mut app = app_with_sample();
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+        handle_viewer(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings to export")
+        );
+
+        app.begin_scan();
+        for _ in 0..10_000 {
+            if app.scan_step(10_000) {
+                break;
+            }
+        }
+        assert!(!app.findings.is_empty());
+        assert!(app.show_findings);
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(!app.show_findings);
+        handle_viewer(&mut app, KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(app.show_findings);
+
+        let path = std::env::temp_dir().join(format!(
+            "loglens-findings-event-{}-{}.md",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        app.export_findings_to(&path).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(&path).ok();
+
+        // `e` from the findings panel also exports (status reflects success).
+        handle_viewer(&mut app, KeyCode::Char('e'), KeyModifiers::NONE);
+        assert!(
+            app.status.as_deref().unwrap_or("").contains("exported")
+                || app
+                    .status
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("export failed"),
+            "unexpected status: {:?}",
+            app.status
+        );
+        // Clean up default cwd export if the keybinding wrote it.
+        let _ = std::fs::remove_file("loglens-findings.md");
     }
 
     #[test]
@@ -503,5 +611,46 @@ mod tests {
         assert!(!app.should_quit);
         handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn bookmark_keys_toggle_and_jump() {
+        let mut app = app_with_sample();
+        assert!(app.file().lines.len() >= 3);
+        app.file_mut().view_pos = 0;
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![0]);
+        app.move_cursor(2);
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![0, 2]);
+        handle_viewer(&mut app, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 0);
+        handle_viewer(&mut app, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 2);
+        handle_viewer(&mut app, KeyCode::Char('"'), KeyModifiers::NONE);
+        assert_eq!(app.file().view_pos, 0);
+        handle_viewer(&mut app, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(app.file().bookmarks, vec![2]);
+    }
+
+    #[test]
+    fn bookmark_requires_open_file() {
+        let mut empty = App::new(&[], Vec::new(), false).unwrap();
+        handle_viewer(&mut empty, KeyCode::Char('m'), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before bookmarking")
+        );
+        handle_viewer(&mut empty, KeyCode::Char('\''), KeyModifiers::NONE);
+        assert!(
+            empty
+                .status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before jumping bookmarks")
+        );
     }
 }

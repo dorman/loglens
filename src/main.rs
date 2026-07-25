@@ -1,6 +1,7 @@
 mod app;
 mod browser;
 mod cli;
+mod clipboard;
 mod event;
 mod ingest;
 mod rules;
