@@ -11,10 +11,22 @@ use std::fs;
 use std::path::PathBuf;
 
 /// User preferences that survive across sessions.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// When true, keyword/regex highlights match case-insensitively.
     pub ignore_case: bool,
+    /// When true, the highlight legend panel is visible.
+    pub show_legend: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            ignore_case: false,
+            // Match the App bootstrap default so a missing key keeps the legend.
+            show_legend: true,
+        }
+    }
 }
 
 /// Resolve the directory that holds `config`. Honours `LOGLENS_CONFIG_DIR`
@@ -45,7 +57,7 @@ fn config_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("config"))
 }
 
-/// Load preferences. Missing file / unreadable path → defaults (all false).
+/// Load preferences. Missing file / unreadable path → [`Config::default`].
 pub fn load() -> Config {
     let Some(path) = config_path() else {
         return Config::default();
@@ -68,9 +80,11 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     fs::create_dir_all(&dir)?;
     let path = dir.join("config");
     let body = format!(
-        "# loglens preferences — updated when you press `i` in the TUI\n\
-         ignore_case={}\n",
-        if cfg.ignore_case { "true" } else { "false" }
+        "# loglens preferences — updated when you press `i` / `l` in the TUI\n\
+         ignore_case={}\n\
+         show_legend={}\n",
+        if cfg.ignore_case { "true" } else { "false" },
+        if cfg.show_legend { "true" } else { "false" }
     );
     fs::write(path, body)
 }
@@ -87,8 +101,10 @@ fn parse(text: &str) -> Config {
         };
         let key = key.trim();
         let value = value.trim();
-        if key == "ignore_case" {
-            cfg.ignore_case = parse_bool(value);
+        match key {
+            "ignore_case" => cfg.ignore_case = parse_bool(value),
+            "show_legend" => cfg.show_legend = parse_bool(value),
+            _ => {}
         }
     }
     cfg
@@ -122,6 +138,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_show_legend_defaults_true_when_absent() {
+        assert!(parse("").show_legend);
+        assert!(parse("ignore_case=true\n").show_legend);
+        assert!(!parse("show_legend=false\n").show_legend);
+        assert!(!parse("show_legend=0\n").show_legend);
+        assert!(parse("show_legend=yes\n").show_legend);
+    }
+
+    #[test]
     fn load_save_roundtrip_via_env_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!(
@@ -141,16 +166,23 @@ mod tests {
 
         assert_eq!(load(), Config::default());
 
-        let on = Config { ignore_case: true };
+        let on = Config {
+            ignore_case: true,
+            show_legend: false,
+        };
         save(&on).unwrap();
         assert_eq!(load(), on);
 
-        let off = Config { ignore_case: false };
+        let off = Config {
+            ignore_case: false,
+            show_legend: true,
+        };
         save(&off).unwrap();
         assert_eq!(load(), off);
 
         let text = fs::read_to_string(dir.join("config")).unwrap();
         assert!(text.contains("ignore_case=false"));
+        assert!(text.contains("show_legend=true"));
         assert!(text.contains('#'));
 
         unsafe {

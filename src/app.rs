@@ -684,13 +684,7 @@ impl App {
         }
         self.rules = rebuilt;
         let case = if self.ignore_case { "on" } else { "off" };
-        let saved = crate::config::save(&crate::config::Config {
-            ignore_case: self.ignore_case,
-        });
-        let persist = match saved {
-            Ok(()) => " · saved".to_string(),
-            Err(_) => " · could not save pref".to_string(),
-        };
+        let persist = self.persist_prefs();
         let status = if dropped > 0 {
             format!(
                 "case-insensitive: {case}{persist} ({dropped} rule(s) dropped — failed to recompile)"
@@ -1641,6 +1635,20 @@ impl App {
 
     pub fn toggle_legend(&mut self) {
         self.show_legend = !self.show_legend;
+        let state = if self.show_legend { "shown" } else { "hidden" };
+        let persist = self.persist_prefs();
+        self.status = Some(format!("legend: {state}{persist}"));
+    }
+
+    /// Write current prefs to disk. Returns a short status suffix.
+    fn persist_prefs(&self) -> String {
+        match crate::config::save(&crate::config::Config {
+            ignore_case: self.ignore_case,
+            show_legend: self.show_legend,
+        }) {
+            Ok(()) => " · saved".to_string(),
+            Err(_) => " · could not save pref".to_string(),
+        }
     }
 
     pub fn toggle_help(&mut self) {
@@ -2815,9 +2823,40 @@ mod tests {
         );
         let loaded = crate::config::load();
         assert!(loaded.ignore_case);
+        assert!(loaded.show_legend); // default preserved across ignore_case save
         app.toggle_ignore_case();
         assert!(!app.ignore_case);
         assert!(!crate::config::load().ignore_case);
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toggle_legend_persists_preference() {
+        let dir = tmp_name("legend-pref");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: test-only env override; cleaned up before return.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        assert!(app.show_legend);
+        app.toggle_legend();
+        assert!(!app.show_legend);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("legend: hidden")
+        );
+        let loaded = crate::config::load();
+        assert!(!loaded.show_legend);
+        assert!(!loaded.ignore_case); // default preserved across legend save
+        app.toggle_legend();
+        assert!(app.show_legend);
+        assert!(crate::config::load().show_legend);
         unsafe {
             std::env::remove_var("LOGLENS_CONFIG_DIR");
         }

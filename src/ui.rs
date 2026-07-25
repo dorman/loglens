@@ -1038,7 +1038,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  a / r           add keyword / regex highlight"),
         Line::from("  click legend    jump through that highlight's matches"),
         Line::from("  x               remove the last highlight"),
-        Line::from("  i / l           toggle case-insensitive (persisted) / legend"),
+        Line::from("  i / l           toggle case-insensitive / legend (both persisted)"),
         Line::from(""),
         head("File browser"),
         Line::from("  Enter / l       enter directory / open file"),

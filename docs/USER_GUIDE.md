@@ -239,7 +239,7 @@ legend panel on the right with a live match count.
 | `r` | add a **regex** highlight (e.g. `error \d{4}` or `powershell\.exe.*-enc`) |
 | `x` | remove the most recently added highlight |
 | `i` | toggle case-insensitive matching for **all** rules (saved to `~/.config/loglens/config`) |
-| `l` | show/hide the legend panel |
+| `l` | show/hide the legend panel (also saved to the same config file) |
 
 Click a highlight in the legend to jump to its next match; keep clicking to
 step through every occurrence (the active rule shows a ▸ marker).
@@ -327,11 +327,11 @@ loglens [OPTIONS] [FILES]...
 | `--version` | print version |
 | `--help` | print CLI help |
 
-Preferences: pressing `i` in the TUI writes `ignore_case=true|false` to
-`~/.config/loglens/config` (or `$XDG_CONFIG_HOME/loglens/config` /
-`%APPDATA%\loglens\config` on Windows). Override the directory with
-`LOGLENS_CONFIG_DIR`. The next launch restores that setting unless you pass
-`-i` (which forces on for the session).
+Preferences: pressing `i` / `l` in the TUI writes `ignore_case` and
+`show_legend` (`true|false`) to `~/.config/loglens/config` (or
+`$XDG_CONFIG_HOME/loglens/config` / `%APPDATA%\loglens\config` on Windows).
+Override the directory with `LOGLENS_CONFIG_DIR`. The next launch restores
+those settings; `-i` still forces ignore-case on for the session.
 
 Example — open a bundle with a standing rule set:
 
