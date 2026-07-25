@@ -111,7 +111,7 @@ Project layout: `src/main.rs` (wire-up), `src/cli.rs` (flags), `src/app.rs`
 `src/ingest.rs` (file/folder/zip loading), `src/rules.rs` (highlight compile),
 `src/signatures.rs` (built-in detection library), `src/theme.rs` (dark palette /
 level tint), `src/browser.rs` (in-TUI file browser), `src/clipboard.rs` (OSC-52 yank),
-`src/config.rs` (persisted prefs such as ignore-case).
+`src/config.rs` (persisted prefs such as ignore-case and legend visibility).
 
 Resource caps for untrusted bundles (file size, zip extract, line/rule
 budgets) are listed in **[docs/USER_GUIDE.md — Limits & safety](docs/USER_GUIDE.md#limits--safety)**.
