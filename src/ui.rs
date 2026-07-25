@@ -474,10 +474,7 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         match file.scan_severity.get(line_idx).copied().flatten() {
             Some(sev) => spans.push(Span::styled("\u{25CF} ", Style::default().fg(sev.color()))),
             None if bookmarked => {
-                spans.push(Span::styled(
-                    "\u{25C6} ",
-                    Style::default().fg(t.accent),
-                ));
+                spans.push(Span::styled("\u{25C6} ", Style::default().fg(t.accent)));
             }
             None => spans.push(Span::raw("  ")),
         }

@@ -840,10 +840,7 @@ impl App {
             .unwrap_or(0);
         let n = marks.len() as isize;
         let next = if dir > 0 {
-            marks
-                .iter()
-                .position(|&l| l > cur_line)
-                .unwrap_or(0)
+            marks.iter().position(|&l| l > cur_line).unwrap_or(0)
         } else {
             marks
                 .iter()
