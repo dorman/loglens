@@ -1237,33 +1237,18 @@ mod tests {
         app.push_input_chars("3".chars());
         app.confirm_input();
         assert_eq!(app.file().view[app.file().view_pos], 2);
-        assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .contains("jumped to L3")
-        );
+        assert!(app.status.as_deref().unwrap_or("").contains("jumped to L3"));
 
         app.begin_input(InputKind::GoToLine);
         app.push_input_chars(format!("{}", last + 50).chars());
         app.confirm_input();
         assert_eq!(app.file().view[app.file().view_pos], last - 1);
-        assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .contains("past end")
-        );
+        assert!(app.status.as_deref().unwrap_or("").contains("past end"));
 
         app.begin_input(InputKind::GoToLine);
         app.push_input_chars("0".chars());
         app.confirm_input();
-        assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .contains("start at 1")
-        );
+        assert!(app.status.as_deref().unwrap_or("").contains("start at 1"));
 
         app.begin_input(InputKind::GoToLine);
         app.push_input_chars("abc".chars());
