@@ -2185,10 +2185,7 @@ mod tests {
         app.next_match();
         assert!(app.file().view_pos > start || hit_lines <= 1);
         assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .starts_with("match "),
+            app.status.as_deref().unwrap_or("").starts_with("match "),
             "next_match should report position: {:?}",
             app.status
         );
@@ -2207,10 +2204,7 @@ mod tests {
         app.next_match();
         let first = app.file().view_pos;
         assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .starts_with("match 1/"),
+            app.status.as_deref().unwrap_or("").starts_with("match 1/"),
             "wrap-to-first should report match 1/n: {:?}",
             app.status
         );
@@ -2229,10 +2223,7 @@ mod tests {
         app.next_match();
         assert_eq!(app.file().view_pos, first);
         assert!(
-            app.status
-                .as_deref()
-                .unwrap_or("")
-                .starts_with("match 1/"),
+            app.status.as_deref().unwrap_or("").starts_with("match 1/"),
             "{:?}",
             app.status
         );
