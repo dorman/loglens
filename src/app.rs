@@ -765,13 +765,42 @@ impl App {
     }
 
     pub fn toggle_filter(&mut self) {
+        // Remember the absolute line under the cursor so we can tell the user
+        // when turning filter on drops that line out of the view.
+        let prior_line = if self.has_files() {
+            self.file().view.get(self.file().view_pos).copied()
+        } else {
+            None
+        };
+
         self.filter_on = !self.filter_on;
         self.rebuild_views();
         self.ensure_cursor_visible();
-        self.status = Some(format!(
-            "filter: {}",
-            if self.filter_on { "on" } else { "off" }
-        ));
+
+        self.status = Some(if !self.filter_on {
+            "filter: off".into()
+        } else if !self.has_files() {
+            "filter: on".into()
+        } else if self.file().view.is_empty() {
+            match prior_line {
+                Some(line) => format!("filter: on · no matches (was on L{})", line + 1),
+                None => "filter: on · no matches".into(),
+            }
+        } else if let Some(line) = prior_line {
+            if self.file().view.contains(&line) {
+                "filter: on".into()
+            } else {
+                let now = self
+                    .file()
+                    .view
+                    .get(self.file().view_pos)
+                    .map(|l| l + 1)
+                    .unwrap_or(1);
+                format!("filter: on · L{} hidden — now L{now}", line + 1)
+            }
+        } else {
+            "filter: on".into()
+        });
     }
 
     fn search_hits(&self) -> usize {
@@ -3050,6 +3079,59 @@ mod tests {
         assert!(app.search.is_none());
         assert!(!app.filter_on);
         assert_eq!(app.status.as_deref(), Some("search and filter cleared"));
+    }
+
+    #[test]
+    fn toggle_filter_reports_when_cursor_line_is_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        // Sit on a non-ERROR line, then filter to ERROR so that line disappears.
+        let non_error = app
+            .file()
+            .lines
+            .iter()
+            .position(|l| !l.to_lowercase().contains("error"))
+            .expect("sample.log should have a non-ERROR line");
+        app.file_mut().view_pos = non_error;
+        app.set_search("ERROR");
+        app.toggle_filter();
+        assert!(app.filter_on);
+        assert!(
+            !app.file().view.contains(&non_error),
+            "filtered view should exclude the prior cursor line"
+        );
+        let status = app.status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("hidden") && status.contains(&format!("L{}", non_error + 1)),
+            "status should flash that the cursor line was hidden: {status:?}"
+        );
+        assert!(
+            status.contains("now L"),
+            "status should name the new cursor line: {status:?}"
+        );
+
+        // Cursor already on a matching line → plain "filter: on".
+        app.toggle_filter(); // off
+        assert_eq!(app.status.as_deref(), Some("filter: off"));
+        let error_line = app
+            .file()
+            .lines
+            .iter()
+            .position(|l| l.contains("ERROR"))
+            .expect("sample.log should have an ERROR line");
+        app.file_mut().view_pos = error_line;
+        app.toggle_filter(); // on again
+        assert_eq!(app.status.as_deref(), Some("filter: on"));
+
+        // Empty match set names the vacated line.
+        app.toggle_filter(); // off
+        app.set_search("this-will-not-match-zzzz");
+        app.file_mut().view_pos = 0;
+        app.toggle_filter();
+        assert!(app.file().view.is_empty());
+        assert_eq!(
+            app.status.as_deref(),
+            Some("filter: on · no matches (was on L1)")
+        );
     }
 
     #[test]

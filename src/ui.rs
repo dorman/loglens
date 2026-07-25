@@ -1036,7 +1036,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
         head("Search & filter"),
         Line::from("  /               search (n/N walk results)"),
-        Line::from("  f               filter: show only matching lines"),
+        Line::from("  f               filter: show only matching lines (status if cursor hidden)"),
         Line::from("  c               clear search and filter together"),
         Line::from("  Esc             clear search → clear filter → quit"),
         Line::from(""),

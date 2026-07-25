@@ -270,9 +270,10 @@ Filter mode is the biggest time-saver in the tool:
 - With no search, `f` shows **only lines that hit one of your highlights**.
 
 Either way, original line numbers are preserved, so a 10,000-line log
-becomes the 40 lines worth reading without losing your place. Press `f`
-again, `c` (clears search and filter together), or `Esc` once search is
-cleared to restore the full view.
+becomes the 40 lines worth reading without losing your place. If `f` hides
+the line you were on, the status bar says so and the cursor moves to the
+nearest remaining match. Press `f` again, `c` (clears search and filter
+together), or `Esc` once search is cleared to restore the full view.
 
 Search matches render with a bright white highlight, layered on top of any
 keyword colors.
