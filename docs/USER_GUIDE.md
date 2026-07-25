@@ -124,7 +124,9 @@ at depth 32 / 2,000 files per resolve — see [Limits & safety](#limits--safety)
 
 ### From inside the TUI (the file browser)
 
-Press `o` anywhere to open the file browser popup:
+Press `o` anywhere to open the file browser popup. The browser reopens at the
+last directory you visited (saved in `~/.config/loglens/config`) when that path
+still exists; otherwise it starts in the process working directory.
 
 | Key | Action |
 | --- | ------ |
@@ -338,8 +340,10 @@ loglens [OPTIONS] [FILES]...
 Preferences: pressing `i` / `l` in the TUI writes `ignore_case` and
 `show_legend` (`true|false`) to `~/.config/loglens/config` (or
 `$XDG_CONFIG_HOME/loglens/config` / `%APPDATA%\loglens\config` on Windows).
-Override the directory with `LOGLENS_CONFIG_DIR`. The next launch restores
-those settings; `-i` still forces ignore-case on for the session.
+Navigating or leaving the file browser (`o`) also writes `browser_cwd` so the
+next launch reopens there when the path still exists. Override the directory
+with `LOGLENS_CONFIG_DIR`. The next launch restores those settings; `-i` still
+forces ignore-case on for the session.
 
 Example — open a bundle with a standing rule set:
 

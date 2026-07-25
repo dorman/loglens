@@ -17,6 +17,9 @@ pub struct Config {
     pub ignore_case: bool,
     /// When true, the highlight legend panel is visible.
     pub show_legend: bool,
+    /// Last directory opened in the in-TUI file browser (`o`).
+    /// Restored on the next launch when the path still exists.
+    pub browser_cwd: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -25,6 +28,7 @@ impl Default for Config {
             ignore_case: false,
             // Match the App bootstrap default so a missing key keeps the legend.
             show_legend: true,
+            browser_cwd: None,
         }
     }
 }
@@ -79,13 +83,17 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     })?;
     fs::create_dir_all(&dir)?;
     let path = dir.join("config");
-    let body = format!(
-        "# loglens preferences — updated when you press `i` / `l` in the TUI\n\
+    let mut body = format!(
+        "# loglens preferences — updated when you press `i` / `l` / browse with `o`\n\
          ignore_case={}\n\
          show_legend={}\n",
         if cfg.ignore_case { "true" } else { "false" },
         if cfg.show_legend { "true" } else { "false" }
     );
+    if let Some(cwd) = &cfg.browser_cwd {
+        // Path may contain '=' — only the first '=' is the separator on load.
+        body.push_str(&format!("browser_cwd={}\n", cwd.display()));
+    }
     fs::write(path, body)
 }
 
@@ -104,6 +112,13 @@ fn parse(text: &str) -> Config {
         match key {
             "ignore_case" => cfg.ignore_case = parse_bool(value),
             "show_legend" => cfg.show_legend = parse_bool(value),
+            "browser_cwd" => {
+                cfg.browser_cwd = if value.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(value))
+                };
+            }
             _ => {}
         }
     }
@@ -147,6 +162,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_browser_cwd() {
+        assert_eq!(parse("").browser_cwd, None);
+        assert_eq!(
+            parse("browser_cwd=/var/log\n").browser_cwd,
+            Some(PathBuf::from("/var/log"))
+        );
+        // Value may contain '=' (split_once keeps the remainder).
+        assert_eq!(
+            parse("browser_cwd=/tmp/a=b\n").browser_cwd,
+            Some(PathBuf::from("/tmp/a=b"))
+        );
+        assert_eq!(parse("browser_cwd=\n").browser_cwd, None);
+    }
+
+    #[test]
     fn load_save_roundtrip_via_env_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!(
@@ -169,6 +199,7 @@ mod tests {
         let on = Config {
             ignore_case: true,
             show_legend: false,
+            browser_cwd: Some(PathBuf::from("/var/log")),
         };
         save(&on).unwrap();
         assert_eq!(load(), on);
@@ -176,6 +207,7 @@ mod tests {
         let off = Config {
             ignore_case: false,
             show_legend: true,
+            browser_cwd: None,
         };
         save(&off).unwrap();
         assert_eq!(load(), off);
@@ -183,6 +215,7 @@ mod tests {
         let text = fs::read_to_string(dir.join("config")).unwrap();
         assert!(text.contains("ignore_case=false"));
         assert!(text.contains("show_legend=true"));
+        assert!(!text.contains("browser_cwd="));
         assert!(text.contains('#'));
 
         unsafe {

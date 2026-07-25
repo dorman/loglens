@@ -234,6 +234,8 @@ fn handle_browser(app: &mut App, code: KeyCode) {
             if app.has_files() {
                 app.close_browser();
             } else {
+                // Persist cwd even when quitting from the welcome browser.
+                app.remember_browser_cwd();
                 app.should_quit = true;
             }
         }
@@ -241,11 +243,16 @@ fn handle_browser(app: &mut App, code: KeyCode) {
         KeyCode::Char('k') | KeyCode::Up => app.browser.move_selection(-1),
         KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
             // Enter a directory, or open the selected/marked file(s).
-            if !app.browser.enter_dir() {
+            if app.browser.enter_dir() {
+                app.remember_browser_cwd();
+            } else {
                 app.open_selected_files();
             }
         }
-        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => app.browser.go_parent(),
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+            app.browser.go_parent();
+            app.remember_browser_cwd();
+        }
         KeyCode::Char(' ') => app.browser.toggle_mark(),
         KeyCode::Char('o') => app.open_selected_files(),
         KeyCode::Char('O') => app.open_selected_dir(),
