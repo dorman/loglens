@@ -42,8 +42,28 @@ asset="loglens-${target}.tar.gz"
 
 echo "Resolving latest release for ${target}…"
 api="https://api.github.com/repos/${REPO}/releases/latest"
+# Do not use curl -f: a missing release (HTTP 404) should fall through to the
+# friendly "install from source" message below instead of a raw curl error.
+http_body="$(mktemp)"
+http_code="$(curl -sS -o "$http_body" -w "%{http_code}" "$api" || true)"
+if [[ "$http_code" != "200" ]]; then
+  code="${http_code:-000}"
+  if [[ "$code" == "404" ]]; then
+    echo "error: no GitHub Release published yet (HTTP 404)." >&2
+    echo "       Prebuilt installs land after a public v* tag; until then use source:" >&2
+  else
+    echo "error: GitHub Releases API request failed (HTTP ${code})." >&2
+    echo "       Check network / API access, then retry — or install from source:" >&2
+  fi
+  echo "         cargo install --git https://github.com/${REPO} --locked" >&2
+  echo "       Or from a clone: cargo install --path . --locked" >&2
+  echo "       Releases: https://github.com/${REPO}/releases" >&2
+  rm -f "$http_body"
+  exit 1
+fi
 # Prefer the tagged browser_download_url matching our asset name.
-url="$(curl -fsSL "$api" | sed -n "s/.*\"browser_download_url\": \"\\([^\"]*${asset}\\)\"/\1/p" | head -n1)"
+url="$(sed -n "s/.*\"browser_download_url\": \"\\([^\"]*${asset}\\)\"/\1/p" "$http_body" | head -n1)"
+rm -f "$http_body"
 if [[ -z "$url" ]]; then
   echo "error: could not find asset ${asset} in the latest GitHub release." >&2
   echo "       Releases: https://github.com/${REPO}/releases" >&2

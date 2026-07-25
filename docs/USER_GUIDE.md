@@ -20,7 +20,8 @@ This guide covers everything. For a 2-minute intro, see the
 7. [Mouse reference](#mouse-reference)
 8. [Keybinding reference](#keybinding-reference)
 9. [Command-line reference](#command-line-reference)
-10. [Troubleshooting](#troubleshooting)
+10. [Limits & safety](#limits--safety)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -112,10 +113,14 @@ loglens support-collection.zip   # a zip: extracted and loaded the same way
 Folders and zips are loaded recursively. Every text log becomes its own tab,
 named by its relative path (`AV/agent.log`, `system/network.log`). Binary
 files are detected and skipped automatically, so a bundle full of `.db` /
-`.bin` files stays clean. Files over 50 MB are skipped.
+`.bin` files stays clean. Empty files, files over **50 MiB**, and files whose
+first 8 KiB contain a NUL byte are skipped during collection; a direct open
+of a file above 50 MiB is rejected too.
 
 Zip archives are extracted to a temporary directory and hardened against
-hostile input (path traversal and zip-bomb protection built in).
+hostile input (path traversal / zip-slip, archive-size and extract-size
+caps, entry-count limits). Auto-collection never follows symlinks and stops
+at depth 32 / 2,000 files per resolve — see [Limits & safety](#limits--safety).
 
 ### From inside the TUI (the file browser)
 
@@ -148,7 +153,8 @@ You can also click an entry to select it, and wheel-scroll the list.
 
 The main screen shows the current log with line numbers, your highlights
 colored inline, and (after a scan) a severity dot in the gutter next to
-flagged lines.
+flagged lines. Bookmarked lines show a diamond (`◆`) in the gutter (and keep
+an accent-tinted line number even when a severity dot is also present).
 
 Navigation:
 
@@ -157,15 +163,25 @@ Navigation:
 | `j` / `k`, `↓` / `↑` | one line down / up |
 | `Ctrl-d` / `Ctrl-u`, `PgDn` / `PgUp` | one page down / up |
 | `g` / `G`, `Home` / `End` | top / bottom |
+| `:` | go to line number (1-based; clamps past the end) |
+| `m` | toggle a bookmark on the current line |
+| `'` / `"` | next / previous bookmark (wraps; clears filter if the mark is hidden) |
+| `y` | copy the cursor line to the system clipboard (OSC-52) |
 | `n` / `N` | next / previous match (highlights, or search results while searching) |
 
 The scrollbar on the right edge shows your position — click anywhere on it to
 jump, or drag the thumb.
 
-The status bar stays short on purpose: position, highlight count, and
-filter/search state — full keybindings live behind `?`. Log lines are
-soft-tinted by level (`ERROR` / `WARN` / `INFO` / `DEBUG`) even before you add
-highlights, so severity stands out while scrolling.
+The status bar stays short on purpose: absolute line (`L42/1200`), highlight
+count, filter/search state, truncation hint, bookmark count (when any), and
+cached finding count (`N fd` after a scan) — full keybindings live behind `?`.
+Press `:` to jump straight to a line number.
+
+Log lines are soft-tinted by level tokens even before you add highlights
+(`ERROR` / `ERR` / `FATAL` / `CRITICAL` / `CRIT`, `WARN` / `WARNING`,
+`INFO`, `DEBUG` / `TRACE`). Matching is word-token based (so `TERROR` does
+not tint), and the highest severity wins when several tokens appear on one
+line.
 
 ---
 
@@ -192,14 +208,21 @@ In the findings panel:
 - The **detail box** explains *why the selected finding matters* in plain
   English, with the matched log line.
 - `j`/`k` move · `Enter` (or click a row) jumps straight to that line ·
-  `q`/`Esc` closes.
+  `e` exports a markdown summary · `q`/`Esc` closes.
 
 After a scan, flagged lines keep a colored **severity dot** in the gutter, so
-trouble stays visible while you read normally.
+trouble stays visible while you read normally. Press **`s`** to reopen the
+findings panel without rescanning (status bar shows `N fd` while findings are
+cached). Press **`e`** anytime after a scan to write `loglens-findings.md` in
+the current directory — a short triage dump with severity, location, why it
+matters, and the matched line.
 
 Long scans (large bundles) show a live progress bar with a running findings
-count — press `Esc` to cancel. Cancelling clears any partial severity dots so
-the file does not look half-scanned.
+count — press `Esc` or `q` to cancel. Cancelling clears any partial severity
+dots so the file does not look half-scanned. The findings panel itself caps
+at 10,000 hits; if that ceiling is hit the status reads
+`scan: N+ findings (capped)` while gutter severity dots still reflect every
+matched line.
 
 ---
 
@@ -221,7 +244,9 @@ Click a highlight in the legend to jump to its next match; keep clicking to
 step through every occurrence (the active rule shows a ▸ marker).
 
 You can also preload highlights from the command line — see
-[Command-line reference](#command-line-reference).
+[Command-line reference](#command-line-reference). At most **64** highlight
+rules can be active; regex patterns are capped at **512** bytes and compiled
+with size/nest budgets so a pathological pattern cannot hang the TUI.
 
 ---
 
@@ -269,10 +294,12 @@ input prompt, never interpreted as keystrokes.
 Press `?` in the app for this list any time.
 
 **Viewer** — `j`/`k` scroll · `Ctrl-d`/`Ctrl-u` page · `g`/`G` top/bottom ·
+`:` go to line · `m` bookmark · `'`/`"` next/prev bookmark ·
 `n`/`N` next/prev match · `Tab`/`]` next file · `Shift-Tab`/`[` prev file ·
-`o` file browser · `w` close file · `q` quit
+`o` file browser · `w` close file · `y` copy cursor line · `q` quit
 
-**Scan** — `S` scan · in panel: `j`/`k` move, `Enter` jump, `q`/`Esc` close
+**Scan** — `S` scan · `s` reopen findings · `e` export markdown · in panel:
+`j`/`k` move, `Enter` jump, `e` export, `q`/`Esc` close
 
 **Search & filter** — `/` search · `f` filter · `Esc` clear search
 
@@ -309,6 +336,35 @@ loglens -i -k ERROR -k WARN -k "access denied" \
 
 ---
 
+## Limits & safety
+
+loglens is built to open untrusted diagnostic bundles without exhausting
+memory or disk. Caps that most often matter:
+
+| Area | Cap | What happens |
+| ---- | --- | ------------ |
+| Single log file | **50 MiB** | Skipped in folder/zip collect; direct open rejected |
+| Zip archive (compressed) | **256 MiB** | Archive refused before extraction |
+| Zip extract / file | **64 MiB** | Oversized entry skipped |
+| Zip extract / total | **512 MiB** | Further entries skipped |
+| Zip entries scanned | **10,000** | Remainder ignored |
+| Dir depth / files per resolve | **32** / **2,000** | Deeper or extra files skipped |
+| Symlinks (auto-collect) | never followed | Avoids cycles and escape from the bundle |
+| Lines / file · bytes / line | **250,000** · **32 KiB** | Extra lines dropped; long lines truncated with `…` |
+| Open tabs · session lines | **500** · **1,000,000** | Further opens skipped (`open cap reached…`) |
+| Highlight rules · regex source | **64** · **512 B** | Add rejected with a status message |
+| Scan findings panel | **10,000** (Medium+) | Status shows `… findings (capped)`; gutter still updates |
+| Bookmarks / open file | **64** | Toggle rejected with a status message |
+| Clipboard yank payload | **~12 KiB** | Longer lines copied truncated (OSC-52) |
+| Input prompt (incl. paste) | **4,096** characters | Extra input ignored |
+
+When a file hits the line/length caps the open status notes it was
+**truncated**. These numbers live next to the code that enforces them
+(`src/ingest.rs`, `src/app.rs`, `src/rules.rs`, `src/clipboard.rs`) — change
+the constant and the behavior together.
+
+---
+
 ## Troubleshooting
 
 **`command not found: cargo` (or `loglens`)**
@@ -316,10 +372,24 @@ Your shell predates the Rust install. Run `source "$HOME/.cargo/env"` or open
 a new terminal.
 
 **A file won't open / "no log files found"**
-Folders and zips only auto-collect files that look like text and are under
-50 MB. Files whose first bytes contain NULs are treated as binary and
-skipped. Open a specific file directly (`loglens path/to/file`) to bypass
-folder collection.
+Folders and zips only auto-collect non-empty text-looking files under
+50 MiB. Empty files and files whose first 8 KiB contain a NUL are treated as
+binary and skipped. Symlinks are never followed during collection. Open a
+specific file directly (`loglens path/to/file`) to bypass folder collection
+(direct open still rejects files over 50 MiB).
+
+**Status says `open cap reached` or `… truncated`**
+You hit the session file/line budget (500 tabs / 1M lines) or a single file
+exceeded 250k lines / 32 KiB per line. Close tabs with `w`, or open a smaller
+subset of the bundle.
+
+**`highlight limit reached` / regex rejected**
+At most 64 highlight rules; regex patterns max 512 bytes and must compile
+under the size/nest budgets. Remove a rule with `x` and try a simpler pattern.
+
+**Scan status shows `N+ findings (capped)`**
+The findings panel stopped at 10k Medium+ hits. Gutter severity dots still
+cover matched lines — jump via the legend/search, or filter with `f`.
 
 **Log shows `�` characters**
 The file contains non-UTF-8 bytes (common in real diagnostic logs). loglens

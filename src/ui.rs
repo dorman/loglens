@@ -518,14 +518,19 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         let is_cursor = vp == file.view_pos;
 
         let mut spans = Vec::new();
-        // Severity dot from the last scan (blank until scanned).
+        let bookmarked = file.bookmarks.binary_search(&line_idx).is_ok();
+        // Severity dot from the last scan; bookmark ◆ when unmarked by scan.
         match file.scan_severity.get(line_idx).copied().flatten() {
             Some(sev) => spans.push(Span::styled("\u{25CF} ", Style::default().fg(sev.color()))),
+            None if bookmarked => {
+                spans.push(Span::styled("\u{25C6} ", Style::default().fg(t.accent)));
+            }
             None => spans.push(Span::raw("  ")),
         }
+        let gutter_fg = if bookmarked { t.accent } else { t.gutter };
         spans.push(Span::styled(
             format!("{:>width$} \u{2502} ", line_idx + 1, width = gutter_width),
-            Style::default().fg(t.gutter),
+            Style::default().fg(gutter_fg),
         ));
         spans.extend(render_line_spans(
             text,
@@ -628,10 +633,23 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         )])
     } else if app.has_files() {
         let file = app.file();
-        let pos = (file.view_pos + 1).min(file.view.len().max(1));
+        // Absolute (1-based) line of the cursor — stays meaningful in filter mode.
+        let abs_line = file
+            .view
+            .get(file.view_pos)
+            .copied()
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let total_lines = file.lines.len();
         let shown = file.view.len();
         let hl = file.total_matches();
-        let filter = if app.filter_on { " · filter" } else { "" };
+        // When filtered, surface how many lines remain so Lx/y isn't misleading.
+        let filter = if app.filter_on {
+            format!(" · {shown} shown")
+        } else {
+            String::new()
+        };
+        let trunc = if file.truncated { " · trunc" } else { "" };
         let search = match &app.search {
             Some(s) => {
                 let raw: String = s.raw.chars().take(20).collect();
@@ -644,8 +662,21 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             }
             None => String::new(),
         };
+        let bm = file.bookmarks.len();
+        let bookmarks = if bm > 0 {
+            format!(" · {bm} bm")
+        } else {
+            String::new()
+        };
+        let findings = if app.findings.is_empty() {
+            String::new()
+        } else {
+            format!(" · {} fd", app.findings.len())
+        };
         Line::from(vec![Span::styled(
-            format!(" {pos}/{shown} · {hl} hl{filter}{search}  ·  ? help"),
+            format!(
+                " L{abs_line}/{total_lines} · {hl} hl{filter}{trunc}{search}{bookmarks}{findings}  ·  ? help"
+            ),
             base,
         )])
     } else {
@@ -887,7 +918,9 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled("j/k", key(t)),
                 Span::styled(" move   ", dim(t)),
                 Span::styled("Enter/click", key(t)),
-                Span::styled(" jump to line   ", dim(t)),
+                Span::styled(" jump   ", dim(t)),
+                Span::styled("e", key(t)),
+                Span::styled(" export   ", dim(t)),
                 Span::styled("q/Esc", key(t)),
                 Span::styled(" close", dim(t)),
             ]),
@@ -910,6 +943,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         InputKind::Keyword => "Add keyword highlight",
         InputKind::Regex => "Add regex highlight",
         InputKind::Search => "Search (case-insensitive)",
+        InputKind::GoToLine => "Go to line number",
     };
     let rect = centered_rect_lines(area, 60, 3);
     let block = t.panel(&format!(" {prompt} — Enter to go, Esc to cancel "), true);
@@ -975,16 +1009,22 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
         Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
         Line::from("  g / G           jump to top / bottom"),
+        Line::from("  :               go to line number"),
+        Line::from("  m               toggle bookmark on current line"),
+        Line::from("  ' / \"           next / previous bookmark"),
         Line::from("  n / N           next / previous match"),
         Line::from("  Tab / ]         next open file"),
         Line::from("  Shift-Tab / [   previous open file"),
         Line::from("  click a tab     switch open file"),
         Line::from("  click a line    move the cursor there"),
         Line::from("  o / w           open browser / close current file"),
+        Line::from("  y               copy the cursor line to the clipboard"),
         Line::from(""),
         head("Scan & triage"),
         Line::from("  S               scan for known-bad signatures, ranked"),
-        Line::from("  (in panel)      j/k move · Enter/click jump · q close"),
+        Line::from("  s               reopen last findings panel (no rescan)"),
+        Line::from("  e               export findings to loglens-findings.md"),
+        Line::from("  (in panel)      j/k move · Enter jump · e export · q close"),
         Line::from(""),
         head("Search & filter"),
         Line::from("  /               search (n/N walk results, Esc clears)"),

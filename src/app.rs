@@ -30,6 +30,8 @@ const MAX_LINE_BYTES: usize = 32 * 1024;
 const MAX_TOTAL_LINES: usize = 1_000_000;
 /// Max characters accepted in the keyword / regex / search prompt (incl. paste).
 pub const MAX_INPUT_LEN: usize = 4_096;
+/// Soft cap on bookmarks per open file (toggle fails past this).
+const MAX_BOOKMARKS: usize = 64;
 
 /// A single scan hit: signature `sig` matched line `line` of file `file`.
 #[derive(Clone, Copy)]
@@ -135,6 +137,8 @@ pub struct LogFile {
     pub top: usize,
     /// Highest-severity scan finding per line (None until a scan runs).
     pub scan_severity: Vec<Option<Severity>>,
+    /// Bookmarked absolute line indices (sorted, unique). Toggle with `m`.
+    pub bookmarks: Vec<usize>,
     /// True if the file was truncated (too many lines and/or overlong lines).
     pub truncated: bool,
 }
@@ -173,6 +177,7 @@ impl LogFile {
             view_pos: 0,
             top: 0,
             scan_severity: vec![None; line_count],
+            bookmarks: Vec::new(),
             truncated,
         };
         file.rescan(rules);
@@ -332,6 +337,8 @@ pub enum InputKind {
     Keyword,
     Regex,
     Search,
+    /// Jump to a 1-based absolute line number in the current file.
+    GoToLine,
 }
 
 pub struct Search {
@@ -571,6 +578,7 @@ impl App {
 
         match kind {
             InputKind::Search => self.set_search(&text),
+            InputKind::GoToLine => self.go_to_line_number(&text),
             InputKind::Keyword | InputKind::Regex => {
                 if text.is_empty() {
                     return;
@@ -594,6 +602,50 @@ impl App {
                     Err(e) => self.status = Some(format!("{e}")),
                 }
             }
+        }
+    }
+
+    /// Jump to a 1-based line number typed in the `:` prompt.
+    ///
+    /// Empty input is a no-op. Values past the end of the file clamp to the
+    /// last line (vim-style). Out-of-range zeros and non-numeric text report
+    /// a status message instead of moving. Empty files report that there is
+    /// nothing to jump to (rather than pretending line 1 exists).
+    fn go_to_line_number(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if !self.has_files() {
+            self.status = Some("open a file before jumping to a line".into());
+            return;
+        }
+        let Ok(n) = text.parse::<usize>() else {
+            self.status = Some(format!("invalid line number: {text}"));
+            return;
+        };
+        if n == 0 {
+            self.status = Some("line numbers start at 1".into());
+            return;
+        }
+        let last = self.file().lines.len();
+        if last == 0 {
+            self.status = Some("file has no lines".into());
+            return;
+        }
+        let line = n.min(last) - 1; // convert to 0-based
+        let file = self.current;
+        self.jump_to_line(file, line);
+        let landed = self
+            .file()
+            .view
+            .get(self.file().view_pos)
+            .copied()
+            .unwrap_or(line)
+            + 1;
+        if n > last {
+            self.status = Some(format!("line {n} past end — jumped to L{landed}"));
+        } else {
+            self.status = Some(format!("jumped to L{landed}"));
         }
     }
 
@@ -962,6 +1014,86 @@ impl App {
         self.clamp_scroll();
     }
 
+    /// Toggle a bookmark on the cursor's absolute line.
+    pub fn toggle_bookmark(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before bookmarking".into());
+            return;
+        }
+        let f = self.file_mut();
+        let Some(&line) = f.view.get(f.view_pos) else {
+            // File open but filter emptied the view (or cursor off-end).
+            self.status = Some("nothing to bookmark".into());
+            return;
+        };
+        match f.bookmarks.binary_search(&line) {
+            Ok(idx) => {
+                f.bookmarks.remove(idx);
+                let left = f.bookmarks.len();
+                self.status = Some(if left == 0 {
+                    format!("cleared bookmark on line {}", line + 1)
+                } else {
+                    format!("cleared bookmark on line {} ({left} left)", line + 1)
+                });
+            }
+            Err(idx) => {
+                if f.bookmarks.len() >= MAX_BOOKMARKS {
+                    self.status = Some(format!("bookmark limit reached ({MAX_BOOKMARKS})"));
+                    return;
+                }
+                f.bookmarks.insert(idx, line);
+                let n = f.bookmarks.len();
+                self.status = Some(format!("bookmarked line {} ({n})", line + 1));
+            }
+        }
+    }
+
+    /// Jump to the next bookmarked line (wraps). Clears filter if needed.
+    pub fn next_bookmark(&mut self) {
+        self.jump_bookmark(1);
+    }
+
+    /// Jump to the previous bookmarked line (wraps). Clears filter if needed.
+    pub fn prev_bookmark(&mut self) {
+        self.jump_bookmark(-1);
+    }
+
+    fn jump_bookmark(&mut self, dir: isize) {
+        if !self.has_files() {
+            self.status = Some("open a file before jumping bookmarks".into());
+            return;
+        }
+        if self.file().bookmarks.is_empty() {
+            self.status = Some("no bookmarks — press m to mark a line".into());
+            return;
+        }
+        let file_idx = self.current;
+        let marks = self.file().bookmarks.clone();
+        let cur_line = self
+            .file()
+            .view
+            .get(self.file().view_pos)
+            .copied()
+            .unwrap_or(0);
+        let n = marks.len() as isize;
+        let next = if dir > 0 {
+            marks.iter().position(|&l| l > cur_line).unwrap_or(0)
+        } else {
+            marks
+                .iter()
+                .rposition(|&l| l < cur_line)
+                .unwrap_or((n - 1) as usize)
+        };
+        let line = marks[next];
+        self.jump_to_line(file_idx, line);
+        self.status = Some(format!(
+            "bookmark {}/{} · line {}",
+            next + 1,
+            marks.len(),
+            line + 1
+        ));
+    }
+
     pub fn next_match(&mut self) {
         if !self.has_files() {
             return;
@@ -1271,6 +1403,97 @@ impl App {
         self.show_findings = false;
     }
 
+    /// Reopen (or close) the findings panel without rescanning.
+    /// `S` always starts a fresh scan; use this after closing the panel.
+    pub fn toggle_findings(&mut self) {
+        if self.findings.is_empty() {
+            self.status = Some("no findings — press S to scan".into());
+            return;
+        }
+        self.show_findings = !self.show_findings;
+        if self.show_findings {
+            self.status = Some(format!(
+                "findings ({}) — e export · Enter jump · q close",
+                self.findings.len()
+            ));
+        }
+    }
+
+    /// Write the current findings list to `loglens-findings.md` in the cwd.
+    pub fn export_findings(&mut self) {
+        if self.findings.is_empty() {
+            self.status = Some("no findings to export — press S to scan".into());
+            return;
+        }
+        let path = PathBuf::from("loglens-findings.md");
+        match self.export_findings_to(&path) {
+            Ok(n) => {
+                self.status = Some(format!("exported {n} findings → {}", path.display()));
+            }
+            Err(e) => {
+                self.status = Some(format!("export failed: {e}"));
+            }
+        }
+    }
+
+    /// Format findings as a short markdown triage summary and write to `path`.
+    pub fn export_findings_to(&self, path: &Path) -> Result<usize> {
+        let text = self.format_findings_markdown();
+        fs::write(path, text).with_context(|| format!("failed to write '{}'", path.display()))?;
+        Ok(self.findings.len())
+    }
+
+    fn format_findings_markdown(&self) -> String {
+        let c = self.severity_counts();
+        let mut out = String::new();
+        out.push_str("# loglens scan findings\n\n");
+        out.push_str(&format!(
+            "{} findings · {} crit · {} high · {} med · {} low · {} info\n\n",
+            self.findings.len(),
+            c[4],
+            c[3],
+            c[2],
+            c[1],
+            c[0]
+        ));
+        for (i, f) in self.findings.iter().enumerate() {
+            let sig = &self.signatures[f.sig];
+            let file_name = self
+                .files
+                .get(f.file)
+                .map(|lf| lf.name.as_str())
+                .unwrap_or("?");
+            let excerpt = self
+                .files
+                .get(f.file)
+                .and_then(|lf| lf.lines.get(f.line))
+                .map(|l| {
+                    let trimmed = l.trim();
+                    let truncated: String = trimmed.chars().take(240).collect();
+                    if trimmed.chars().count() > 240 {
+                        format!("{truncated}…")
+                    } else {
+                        truncated
+                    }
+                })
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "## {}. {} — {}\n",
+                i + 1,
+                sig.severity.label(),
+                sig.title
+            ));
+            out.push_str(&format!("- **location:** `{file_name}:{}`\n", f.line + 1));
+            out.push_str(&format!("- **category:** {}\n", sig.category));
+            out.push_str(&format!("- **why:** {}\n", sig.explain));
+            if !excerpt.is_empty() {
+                out.push_str(&format!("- **line:** `{excerpt}`\n"));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn next_file(&mut self) {
         if self.files.len() > 1 {
             self.current = (self.current + 1) % self.files.len();
@@ -1343,6 +1566,42 @@ impl App {
 
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+
+    /// Absolute 1-based line number and text under the cursor, if any.
+    pub fn cursor_line(&self) -> Option<(usize, &str)> {
+        if !self.has_files() {
+            return None;
+        }
+        let file = self.file();
+        let &line_idx = file.view.get(file.view_pos)?;
+        Some((line_idx + 1, file.lines.get(line_idx)?.as_str()))
+    }
+
+    /// Copy the cursor line to the system clipboard (OSC-52) and set status.
+    pub fn yank_current_line(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before copying".into());
+            return;
+        }
+        let Some((line_no, text)) = self.cursor_line() else {
+            // File open but filter emptied the view (or cursor off-end).
+            self.status = Some("nothing to copy".into());
+            return;
+        };
+        let text = text.to_owned();
+        match crate::clipboard::copy_text(&text) {
+            Ok(outcome) => {
+                self.status = Some(if outcome.truncated {
+                    format!("copied line {line_no} (truncated)")
+                } else {
+                    format!("copied line {line_no}")
+                });
+            }
+            Err(_) => {
+                self.status = Some("copy failed (terminal may block clipboard)".into());
+            }
+        }
     }
 }
 
@@ -1651,6 +1910,67 @@ mod tests {
         let counts = app.severity_counts();
         assert_eq!(counts[Severity::Info as usize], 0);
         assert_eq!(counts[Severity::Low as usize], 0);
+    }
+
+    #[test]
+    fn toggle_findings_reopens_without_rescan() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.toggle_findings();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings — press S to scan")
+        );
+
+        run_scan_to_completion(&mut app);
+        let n = app.findings.len();
+        assert!(n > 0);
+        assert!(app.show_findings);
+        app.close_findings();
+        assert!(!app.show_findings);
+        app.toggle_findings();
+        assert!(app.show_findings);
+        assert_eq!(app.findings.len(), n, "toggle must not clear findings");
+        app.toggle_findings();
+        assert!(!app.show_findings);
+        assert_eq!(app.findings.len(), n);
+    }
+
+    #[test]
+    fn export_findings_writes_markdown_summary() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.export_findings();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no findings to export")
+        );
+
+        run_scan_to_completion(&mut app);
+        let path = env::temp_dir().join(format!(
+            "loglens-findings-test-{}-{}.md",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let n = app
+            .export_findings_to(&path)
+            .expect("export should succeed");
+        assert_eq!(n, app.findings.len());
+        let text = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).ok();
+        assert!(text.contains("# loglens scan findings"));
+        assert!(text.contains("sample.log"));
+        assert!(
+            text.contains("CRIT") || text.contains("HIGH") || text.contains("MED"),
+            "export should include severity labels"
+        );
+        assert!(text.contains("**why:**"));
+        assert!(text.contains("**location:**"));
     }
 
     #[test]
@@ -2127,5 +2447,186 @@ mod tests {
             assert!(!t.exists(), "temp extract dir should be removed on Drop");
         }
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cursor_line_tracks_view_position() {
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        let (line_no, text) = app.cursor_line().expect("sample has lines");
+        assert_eq!(line_no, 1);
+        assert!(!text.is_empty());
+        app.move_cursor(2);
+        let (line_no, _) = app.cursor_line().expect("still on a line");
+        assert_eq!(line_no, 3);
+    }
+
+    #[test]
+    fn yank_without_files_sets_status() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.yank_current_line();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
+        );
+    }
+
+    #[test]
+    fn yank_empty_view_says_nothing_to_copy() {
+        let mut app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        app.set_search("this-will-not-match-zzzz");
+        app.filter_on = true;
+        app.rebuild_views();
+        assert!(app.file().view.is_empty());
+        app.yank_current_line();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("nothing to copy")
+        );
+    }
+
+    #[test]
+    fn go_to_line_jumps_clamps_and_rejects_bad_input() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        let last = app.file().lines.len();
+        assert!(last >= 3);
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("3".chars());
+        app.confirm_input();
+        assert_eq!(app.file().view[app.file().view_pos], 2);
+        assert!(app.status.as_deref().unwrap_or("").contains("jumped to L3"));
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars(format!("{}", last + 50).chars());
+        app.confirm_input();
+        assert_eq!(app.file().view[app.file().view_pos], last - 1);
+        assert!(app.status.as_deref().unwrap_or("").contains("past end"));
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("0".chars());
+        app.confirm_input();
+        assert!(app.status.as_deref().unwrap_or("").contains("start at 1"));
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("abc".chars());
+        app.confirm_input();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("invalid line number")
+        );
+    }
+
+    #[test]
+    fn go_to_line_rejects_empty_file_without_false_success() {
+        // Regression: lines.len().max(1) treated empty files as 1-line, so
+        // confirming `:1` reported "jumped to L1" even though no content exists.
+        let path = tmp_name("empty-goto");
+        fs::write(&path, b"").unwrap();
+        let mut app = app_with_paths(&[path.to_str().expect("utf8 temp path")]);
+        assert!(app.file().lines.is_empty());
+        assert!(app.file().view.is_empty());
+        let view_pos_before = app.file().view_pos;
+
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("1".chars());
+        app.confirm_input();
+
+        assert!(
+            app.status.as_deref().unwrap_or("").contains("no lines"),
+            "empty file must not report a successful jump: {:?}",
+            app.status
+        );
+        assert!(
+            !app.status.as_deref().unwrap_or("").contains("jumped to"),
+            "must not claim a jump landed: {:?}",
+            app.status
+        );
+        assert_eq!(app.file().view_pos, view_pos_before);
+        assert!(app.file().view.is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn go_to_line_disables_filter_when_target_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("ERROR".chars());
+        app.confirm_input();
+        app.toggle_filter();
+        assert!(app.filter_on);
+        assert!(app.file().view.len() < app.file().lines.len());
+
+        // Line 1 is typically an INFO/header line not matching ERROR.
+        app.begin_input(InputKind::GoToLine);
+        app.push_input_chars("1".chars());
+        app.confirm_input();
+        assert!(!app.filter_on);
+        assert_eq!(app.file().view[app.file().view_pos], 0);
+    }
+
+    #[test]
+    fn toggle_bookmark_empty_view_sets_status() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.set_search("this-will-not-match-zzzz");
+        app.filter_on = true;
+        app.rebuild_views();
+        assert!(app.file().view.is_empty());
+        app.toggle_bookmark();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("nothing to bookmark")
+        );
+        assert!(app.file().bookmarks.is_empty());
+    }
+
+    #[test]
+    fn toggle_bookmark_and_jump_wraps() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        assert!(app.file().lines.len() >= 4);
+        app.file_mut().view_pos = 1;
+        app.toggle_bookmark();
+        app.file_mut().view_pos = 3;
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks, vec![1, 3]);
+
+        // From line 3, next wraps to the first mark (line 1).
+        app.next_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 1);
+        app.next_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 3);
+
+        // Prev wraps the other way.
+        app.prev_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 1);
+        app.prev_bookmark();
+        assert_eq!(app.file().view[app.file().view_pos], 3);
+
+        // Toggle clears.
+        app.toggle_bookmark();
+        assert_eq!(app.file().bookmarks, vec![1]);
+    }
+
+    #[test]
+    fn next_bookmark_defeats_filter_when_hidden() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.file_mut().view_pos = 0;
+        app.toggle_bookmark();
+        let marked = app.file().bookmarks[0];
+        // Filter to a pattern that excludes the bookmarked line.
+        app.set_search("this-will-not-match-zzzz");
+        app.filter_on = true;
+        app.rebuild_views();
+        assert!(!app.file().view.contains(&marked));
+        app.next_bookmark();
+        assert!(!app.filter_on);
+        assert_eq!(app.file().view[app.file().view_pos], marked);
     }
 }
