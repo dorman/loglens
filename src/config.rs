@@ -57,7 +57,7 @@ fn config_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("config"))
 }
 
-/// Load preferences. Missing file / unreadable path → defaults (all false).
+/// Load preferences. Missing file / unreadable path → [`Config::default`].
 pub fn load() -> Config {
     let Some(path) = config_path() else {
         return Config::default();
