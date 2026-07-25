@@ -65,5 +65,5 @@ code in `ingest.rs` / `app.rs` / `rules.rs` — prefer updating both together.
 ### Running the TUI (non-obvious)
 - `loglens` is a full-screen interactive TUI using crossterm raw mode + alternate screen and mouse capture. It requires a real TTY; it does not run headless. To demo it in cloud, run it inside a terminal emulator via computer use, not by piping stdin.
 - Useful sample data lives in `samples/` (`sample.log`, `big.log`, `network.log`, `bundle/`, `bundle.zip`).
-- Key first moves once open: `S` scan for known-bad signatures, `a` add keyword highlight, `/` search, `f` filter, `:` go to line, `m` bookmark, `y` yank, `e` export findings, `?` help, `q` quit.
+- Key first moves once open: `S` scan for known-bad signatures, `a` add keyword highlight, `/` search, `f` filter, `:` go to line, `m` bookmark, `y`/`Y` yank line/path, `e` export findings, `?` help, `q` quit.
 - CLI-only smoke checks that work without a TTY: `loglens --version` and `loglens --help`.

@@ -82,6 +82,7 @@ First moves once you're in:
 | `f`   | filter down to only matching lines |
 | `m`   | bookmark the current line (`'` / `"` jump between marks) |
 | `y`   | copy the cursor line to the clipboard |
+| `Y`   | copy the current file path to the clipboard |
 | `?`   | full keybinding help |
 | `q`   | quit |
 

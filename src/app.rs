@@ -120,6 +120,9 @@ pub struct MatchSpan {
 
 pub struct LogFile {
     pub name: String,
+    /// Filesystem path used to open this tab (canonical when available).
+    /// Kept for yank-path (`Y`) and future reopen/reload features.
+    pub path: PathBuf,
     pub lines: Vec<String>,
     /// Match spans per line, indexed the same as `lines`.
     pub matches: Vec<Vec<MatchSpan>>,
@@ -167,8 +170,12 @@ impl LogFile {
         let (lines, truncated) = split_log_lines(&content);
 
         let line_count = lines.len();
+        // Prefer a canonical absolute path for yank/reload; fall back to the
+        // open path (e.g. if the file vanishes between open and canonicalize).
+        let stored_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let mut file = LogFile {
             name,
+            path: stored_path,
             lines,
             matches: Vec::new(),
             match_lines: Vec::new(),
@@ -1603,6 +1610,31 @@ impl App {
             }
         }
     }
+
+    /// Copy the current tab's filesystem path to the clipboard (OSC-52).
+    pub fn yank_current_path(&mut self) {
+        if !self.has_files() {
+            self.status = Some("open a file before copying".into());
+            return;
+        }
+        let path = self.file().path.display().to_string();
+        if path.is_empty() {
+            self.status = Some("nothing to copy".into());
+            return;
+        }
+        match crate::clipboard::copy_text(&path) {
+            Ok(outcome) => {
+                self.status = Some(if outcome.truncated {
+                    "copied path (truncated)".into()
+                } else {
+                    "copied path".into()
+                });
+            }
+            Err(_) => {
+                self.status = Some("copy failed (terminal may block clipboard)".into());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2485,6 +2517,30 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("nothing to copy")
+        );
+    }
+
+    #[test]
+    fn loaded_file_stores_path_for_yank() {
+        let app = App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap();
+        let path = &app.file().path;
+        assert!(
+            path.ends_with("sample.log"),
+            "expected path ending in sample.log, got {}",
+            path.display()
+        );
+        assert!(path.is_absolute(), "stored path should be absolute when possible");
+    }
+
+    #[test]
+    fn yank_path_without_files_sets_status() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.yank_current_path();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("open a file before copying")
         );
     }
 
