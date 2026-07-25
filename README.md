@@ -15,7 +15,7 @@ logs) and need to spot trouble fast.
 │   6 │ 2026-07-22 10:00:09 ERROR Certificate validation faile││                             │
 │   8 │ 2026-07-22 10:01:03 WARN  Suspicious process detected:││                             │
 ╰────────────────────────────────────────────────────────────╯╰─────────────────────────────╯
- 1/15 shown (15 total) · 7 hl · S scan  / search  f filter  n/N next  o open  a add  ? help
+ 3/15 · 7 hl · dark  ·  ? help
 ```
 
 ## Highlights
@@ -29,8 +29,10 @@ logs) and need to spot trouble fast.
   to only the lines that matter
 - **Bundle-aware** — open a whole folder or `.zip` diagnostic collection;
   every log inside becomes a tab, binaries are skipped automatically
-- **Full mouse support** — wheel scroll, click-drag scrollbar, click a
-  highlight to jump through its matches
+- **Themes & level tint** — `t` / `--theme` cycles `dark` / `light` / `hc`;
+  `ERROR`/`WARN`/… lines soft-tint even before you add highlights
+- **Full mouse support** — wheel scroll, click-drag scrollbar, click a tab or
+  highlight to jump
 
 ## Quick start
 
@@ -75,6 +77,7 @@ First moves once you're in:
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search |
 | `f`   | filter down to only matching lines |
+| `t`   | cycle theme (`dark` / `light` / `hc`) |
 | `?`   | full keybinding help |
 | `q`   | quit |
 
@@ -99,6 +102,12 @@ cargo fmt --check
 cargo run -- samples/bundle
 ```
 
-Project layout: `src/app.rs` (state & logic), `src/ui.rs` (rendering),
-`src/event.rs` (input), `src/ingest.rs` (file/folder/zip loading),
-`src/signatures.rs` (the built-in detection library), `src/theme.rs` (colors).
+Project layout: `src/main.rs` (wire-up), `src/cli.rs` (flags), `src/app.rs`
+(state & logic), `src/ui.rs` (rendering), `src/event.rs` (input),
+`src/ingest.rs` (file/folder/zip loading), `src/rules.rs` (highlight compile),
+`src/signatures.rs` (built-in detection library), `src/theme.rs` (colors /
+level tint), `src/browser.rs` (in-TUI file browser).
+
+Resource caps for untrusted bundles (file size, zip extract, line/rule
+budgets) are listed in **[docs/USER_GUIDE.md — Limits & safety](docs/USER_GUIDE.md#limits--safety)**.
+Agent-oriented code map and CI notes live in **[AGENTS.md](AGENTS.md)**.
