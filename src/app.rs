@@ -2385,7 +2385,10 @@ mod tests {
         let away = app.file().view_pos;
         app.first_match();
         let first = app.file().view_pos;
-        assert!(first < away, "first_match should leave the bottom: {first} vs {away}");
+        assert!(
+            first < away,
+            "first_match should leave the bottom: {first} vs {away}"
+        );
         assert!(
             app.status.as_deref().unwrap_or("").starts_with("match 1/"),
             "first_match should report match 1/n: {:?}",
