@@ -52,3 +52,33 @@ jobs:
         cargo install --path . --force --locked
         loglens --version
         loglens --help | head -n 5
+
+  # Advisories are platform-independent, so this runs once rather than across
+  # the build matrix. It only reads Cargo.lock; it does not build the crate.
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2026
+      with:
+        toolchain: stable
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
+        shared-key: audit
+
+    # Built from source rather than via an installer action to avoid adding
+    # another third-party action to the supply chain. rust-cache restores the
+    # resulting binary, so this compiles only when the cache misses.
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+
+    # Fails on RustSec vulnerability advisories. Informational warnings
+    # (unmaintained, yanked) are reported but do not block: they are not
+    # vulnerabilities, and one appearing upstream should not fail unrelated PRs.
+    - name: Audit dependencies
+      run: cargo audit
