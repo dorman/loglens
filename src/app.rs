@@ -10,7 +10,7 @@ use regex::Regex;
 use crate::browser::Browser;
 use crate::ingest::{self, MAX_LOG_BYTES};
 use crate::rules::{self, MAX_RULES, Rule};
-use crate::signatures::{self, Severity, Signature};
+use crate::signatures::{Library, Severity};
 use crate::theme::Theme;
 
 /// Hard caps that keep hostile or pathological inputs from exhausting memory.
@@ -32,6 +32,11 @@ const MAX_TOTAL_LINES: usize = 1_000_000;
 pub const MAX_INPUT_LEN: usize = 4_096;
 /// Soft cap on bookmarks per open file (toggle fails past this).
 const MAX_BOOKMARKS: usize = 64;
+/// Findings export: base name, and how many numbered variants `e` will try
+/// before giving up rather than overwriting an existing export.
+const EXPORT_STEM: &str = "loglens-findings";
+const EXPORT_DEFAULT_NAME: &str = "loglens-findings.md";
+const MAX_EXPORT_FILES: usize = 99;
 
 /// A single scan hit: signature `sig` matched line `line` of file `file`.
 #[derive(Clone, Copy)]
@@ -134,7 +139,15 @@ pub struct LogFile {
 
     /// The line indices currently displayed, in order. In normal mode this is
     /// every line; in filter mode it is only the matching subset.
+    ///
+    /// Always strictly ascending, which lets lookups use `binary_search`.
     pub view: Vec<usize>,
+    /// Cached `view` positions of the active match set (search hits when a search
+    /// is on, else highlight hits), built lazily by
+    /// [`App::ensure_match_positions`] so `n`/`N` do not re-scan the whole file
+    /// on every keypress. `None` means "not computed yet"; both writers of `view`
+    /// and of the match data clear it.
+    match_positions: Option<Vec<usize>>,
     /// Cursor position as an index *into `view`*.
     pub view_pos: usize,
     /// Index into `view` of the first visible row.
@@ -185,6 +198,7 @@ impl LogFile {
             match_lines: Vec::new(),
             rule_counts: Vec::new(),
             view: Vec::new(),
+            match_positions: None,
             view_pos: 0,
             top: 0,
             h_scroll: 0,
@@ -201,6 +215,7 @@ impl LogFile {
     /// Used for initial file load; interactive rule changes go through the
     /// chunked [`App::begin_rescan`] path so the UI stays responsive.
     pub fn rescan(&mut self, rules: &[Rule]) {
+        self.match_positions = None;
         let mut data = FileMatchData::new(rules.len(), self.lines.len());
         for (i, line) in self.lines.iter().enumerate() {
             if data.total_matches >= MAX_MATCHES_PER_FILE {
@@ -224,6 +239,9 @@ impl LogFile {
     /// Rebuild `view` for the current filter/search state, keeping the cursor on
     /// (or just past) the line it was on before.
     pub fn rebuild_view(&mut self, filter_on: bool, search: Option<&Regex>) {
+        // Positions are indices into `view`, and the active match set depends on
+        // the search that built it — both change here.
+        self.match_positions = None;
         let anchor = self.view.get(self.view_pos).copied().unwrap_or(0);
 
         self.view = if !filter_on {
@@ -372,7 +390,7 @@ pub struct App {
     pub active_rule: Option<usize>,
 
     /// Built-in detection library and the results of the last scan.
-    pub signatures: Vec<Signature>,
+    pub signatures: Library,
     pub findings: Vec<Finding>,
     pub findings_sel: usize,
     pub show_findings: bool,
@@ -421,7 +439,7 @@ impl App {
             filter_on: false,
             search: None,
             active_rule: None,
-            signatures: signatures::builtin(),
+            signatures: Library::builtin(),
             findings: Vec::new(),
             findings_sel: 0,
             show_findings: false,
@@ -912,6 +930,7 @@ impl App {
             }
             if stripped {
                 stripped_any = true;
+                f.match_positions = None;
                 f.match_lines = f
                     .matches
                     .iter()
@@ -1008,6 +1027,7 @@ impl App {
                 f.matches = data.matches;
                 f.match_lines = data.match_lines;
                 f.rule_counts = data.rule_counts;
+                f.match_positions = None;
             } else {
                 let rules = &self.rules;
                 self.files[i].rescan(rules);
@@ -1287,19 +1307,34 @@ impl App {
             self.status = Some("open a file before jumping matches".into());
             return;
         }
-        let Some(hits) = self.active_match_positions() else {
+        if !self.ensure_match_positions() {
             return;
+        }
+        // Read the cached hit list, pick the target, then drop the borrow before
+        // mutating — no copy of the (potentially 250k-entry) list per keypress.
+        let (idx, pos, total) = {
+            let file = self.file();
+            let hits = file
+                .match_positions
+                .as_ref()
+                .expect("ensure_match_positions populated the cache");
+            let cur = file.view_pos;
+            // `hits` is ascending, so the neighbour is a binary search: walking it
+            // linearly would get slower the deeper into the file the cursor is.
+            let idx = if dir > 0 {
+                // First hit after the cursor, wrapping to the first.
+                let after = hits.partition_point(|&p| p <= cur);
+                if after == hits.len() { 0 } else { after }
+            } else {
+                // Last hit before the cursor, wrapping to the last.
+                match hits.partition_point(|&p| p < cur) {
+                    0 => hits.len() - 1,
+                    k => k - 1,
+                }
+            };
+            (idx, hits[idx], hits.len())
         };
-        let cur = self.file().view_pos;
-        let n = hits.len() as isize;
-        let next_idx = if dir > 0 {
-            hits.iter().position(|&p| p > cur).unwrap_or(0)
-        } else {
-            hits.iter()
-                .rposition(|&p| p < cur)
-                .unwrap_or((n - 1) as usize)
-        };
-        self.apply_match_jump(&hits, next_idx);
+        self.apply_match_jump(idx, pos, total);
     }
 
     /// Jump to an absolute hit index (`0` = first). Empty / no-file cases share
@@ -1309,46 +1344,62 @@ impl App {
             self.status = Some("open a file before jumping matches".into());
             return;
         }
-        let Some(hits) = self.active_match_positions() else {
+        if !self.ensure_match_positions() {
             return;
+        }
+        let (idx, pos, total) = {
+            let hits = self
+                .file()
+                .match_positions
+                .as_ref()
+                .expect("ensure_match_positions populated the cache");
+            let idx = idx.min(hits.len() - 1);
+            (idx, hits[idx], hits.len())
         };
-        self.apply_match_jump(&hits, idx.min(hits.len() - 1));
+        self.apply_match_jump(idx, pos, total);
     }
 
-    /// View positions of every active match, or `None` after setting an empty-
-    /// state status message.
-    fn active_match_positions(&mut self) -> Option<Vec<usize>> {
-        let view = self.file().view.clone();
-        let hits: Vec<usize> = view
-            .iter()
-            .enumerate()
-            .filter(|&(_, &line)| self.is_active_match(line))
-            .map(|(pos, _)| pos)
-            .collect();
-        if hits.is_empty() {
+    /// Populate `LogFile::match_positions` for the current file if it is missing.
+    ///
+    /// Returns false (after setting an empty-state status) when there are no
+    /// active matches. Computing this walks every line — and runs the search
+    /// regex on each — so the result is cached until the view or match data
+    /// changes, otherwise every `n`/`N` press would rescan the file.
+    fn ensure_match_positions(&mut self) -> bool {
+        if self.file().match_positions.is_none() {
+            let hits: Vec<usize> = self
+                .file()
+                .view
+                .iter()
+                .enumerate()
+                .filter(|&(_, &line)| self.is_active_match(line))
+                .map(|(pos, _)| pos)
+                .collect();
+            self.file_mut().match_positions = Some(hits);
+        }
+        let empty = self
+            .file()
+            .match_positions
+            .as_ref()
+            .is_none_or(|h| h.is_empty());
+        if empty {
             self.status = Some(if self.search.is_some() {
                 "no search matches".into()
             } else {
                 "no highlight matches — press a to add, or / to search".into()
             });
-            return None;
+            return false;
         }
-        Some(hits)
+        true
     }
 
-    fn apply_match_jump(&mut self, hits: &[usize], idx: usize) {
-        let view = self.file().view.clone();
-        let pos = hits[idx];
-        let line = view[pos];
+    /// Move the cursor to hit `idx` (0-based) at view position `pos`, of `total`.
+    fn apply_match_jump(&mut self, idx: usize, pos: usize, total: usize) {
+        let line = self.file().view.get(pos).copied().unwrap_or(pos);
         self.file_mut().view_pos = pos;
         self.ensure_cursor_visible();
         self.clamp_scroll();
-        self.status = Some(format!(
-            "match {}/{} · line {}",
-            idx + 1,
-            hits.len(),
-            line + 1
-        ));
+        self.status = Some(format!("match {}/{total} · line {}", idx + 1, line + 1));
     }
 
     /// Scroll the viewport by `delta` lines (mouse wheel / scrollbar), dragging
@@ -1484,18 +1535,19 @@ impl App {
             }
             let line = &self.files[st.file].lines[st.line];
             let mut best: Option<Severity> = None;
-            for (si, sig) in self.signatures.iter().enumerate() {
-                if sig.regex.is_match(line) {
-                    // Still record severity on the line even after the findings
-                    // list is capped, so gutter markers remain useful.
-                    best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
-                    if sig.severity >= MIN_FINDING_SEVERITY && st.findings.len() < MAX_FINDINGS {
-                        st.findings.push(Finding {
-                            file: st.file,
-                            line: st.line,
-                            sig: si,
-                        });
-                    }
+            // One `RegexSet` pass yields every matching signature index, in
+            // ascending order — same result as testing each regex in turn.
+            for si in self.signatures.matches(line) {
+                let sig = &self.signatures[si];
+                // Still record severity on the line even after the findings
+                // list is capped, so gutter markers remain useful.
+                best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
+                if sig.severity >= MIN_FINDING_SEVERITY && st.findings.len() < MAX_FINDINGS {
+                    st.findings.push(Finding {
+                        file: st.file,
+                        line: st.line,
+                        sig: si,
+                    });
                 }
             }
             self.files[st.file].scan_severity[st.line] = best;
@@ -1660,11 +1712,13 @@ impl App {
             return;
         }
         self.current = file;
-        if !self.file().view.contains(&line) {
+        // `view` is strictly ascending, so both lookups are binary searches
+        // rather than scans of a possibly 250k-entry list.
+        if self.file().view.binary_search(&line).is_err() {
             self.filter_on = false;
             self.rebuild_views();
         }
-        if let Some(pos) = self.file().view.iter().position(|&l| l == line) {
+        if let Ok(pos) = self.file().view.binary_search(&line) {
             self.file_mut().view_pos = pos;
         }
         self.ensure_cursor_visible();
@@ -1691,24 +1745,56 @@ impl App {
         }
     }
 
-    /// Write the current findings list to `loglens-findings.md` in the cwd.
+    /// Write the current findings list to `loglens-findings.md` in the cwd,
+    /// or `loglens-findings-2.md`, `-3.md`, … when earlier exports are still there.
+    ///
+    /// `e` is one keypress next to `Enter`/`q` in the findings panel, so a
+    /// mis-press must never destroy a previous export. Callers that *want* to
+    /// overwrite a specific file use [`Self::export_findings_to`] directly.
     pub fn export_findings(&mut self) {
         if self.findings.is_empty() {
             self.status = Some("no findings to export — press S to scan".into());
             return;
         }
-        let path = PathBuf::from("loglens-findings.md");
+        // Empty base = the process cwd: `Path::new("").join("x.md")` is "x.md".
+        let Some(path) = Self::next_export_path_in(Path::new("")) else {
+            self.status = Some(format!(
+                "export failed: {EXPORT_STEM}*.md already exists (tried {MAX_EXPORT_FILES})"
+            ));
+            return;
+        };
+        let renamed = path.file_name() != Some(std::ffi::OsStr::new(EXPORT_DEFAULT_NAME));
         match self.export_findings_to(&path) {
             Ok(n) => {
                 // Report where the file actually landed: the export goes to the
                 // process cwd, which is rarely the directory the logs came from.
                 let shown = path.canonicalize().unwrap_or_else(|_| path.clone());
-                self.status = Some(format!("exported {n} findings → {}", shown.display()));
+                self.status = Some(if renamed {
+                    format!(
+                        "exported {n} findings → {} (kept the earlier export)",
+                        shown.display()
+                    )
+                } else {
+                    format!("exported {n} findings → {}", shown.display())
+                });
             }
             Err(e) => {
                 self.status = Some(format!("export failed: {e}"));
             }
         }
+    }
+
+    /// First free export filename under `dir`, or `None` if they are all taken.
+    /// Takes the directory as a parameter so it is testable without changing the
+    /// process-wide cwd.
+    fn next_export_path_in(dir: &Path) -> Option<PathBuf> {
+        let first = dir.join(EXPORT_DEFAULT_NAME);
+        if !first.exists() {
+            return Some(first);
+        }
+        (2..=MAX_EXPORT_FILES)
+            .map(|n| dir.join(format!("{EXPORT_STEM}-{n}.md")))
+            .find(|p| !p.exists())
     }
 
     /// Format findings as a short markdown triage summary and write to `path`.
@@ -2367,6 +2453,37 @@ mod tests {
         assert!(text.contains("**location:**"));
     }
 
+    /// `e` must never clobber an earlier export: it steps to the next free
+    /// numbered name instead, and reports failure rather than overwriting once
+    /// they are exhausted.
+    #[test]
+    fn export_picks_a_fresh_name_instead_of_overwriting() {
+        let dir = tmp_name("export-collide");
+        fs::create_dir_all(&dir).unwrap();
+
+        // Nothing there yet → the plain default name.
+        let first = App::next_export_path_in(&dir).expect("first export path");
+        assert_eq!(first, dir.join("loglens-findings.md"));
+        fs::write(&first, b"earlier export\n").unwrap();
+
+        // Default taken → numbered, and the earlier file is untouched.
+        let second = App::next_export_path_in(&dir).expect("second export path");
+        assert_eq!(second, dir.join("loglens-findings-2.md"));
+        fs::write(&second, b"second\n").unwrap();
+        assert_eq!(fs::read_to_string(&first).unwrap(), "earlier export\n");
+
+        let third = App::next_export_path_in(&dir).expect("third export path");
+        assert_eq!(third, dir.join("loglens-findings-3.md"));
+
+        // All names taken → None, so the caller reports an error and writes nothing.
+        for n in 3..=MAX_EXPORT_FILES {
+            fs::write(dir.join(format!("loglens-findings-{n}.md")), b"x").unwrap();
+        }
+        assert!(App::next_export_path_in(&dir).is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn findings_jump_disables_filter_when_line_hidden() {
         let mut app = app_with_paths(&["samples/sample.log"]);
@@ -2578,6 +2695,104 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("open a file before jumping matches")
+        );
+    }
+
+    /// The active-match list is cached, so every path that changes the view or
+    /// the match data must invalidate it. A stale cache would report the previous
+    /// hit count — or index past the end of a shorter view.
+    #[test]
+    fn match_nav_cache_follows_search_filter_and_rule_changes() {
+        fn hit_total(app: &App) -> usize {
+            // Status is "match i/n · line L".
+            let s = app.status.as_deref().unwrap_or("");
+            s.split_once('/')
+                .and_then(|(_, rest)| rest.split_once(' '))
+                .and_then(|(n, _)| n.parse().ok())
+                .unwrap_or_else(|| panic!("expected 'match i/n · line L', got {s:?}"))
+        }
+
+        let mut app = app_with_paths(&["samples/sample.log"]);
+
+        // "ERROR" is on 4 lines of the sample; "WARN" on 3.
+        let search = |app: &mut App, text: &str| {
+            app.begin_input(InputKind::Search);
+            app.push_input_chars(text.chars());
+            app.confirm_input();
+        };
+
+        search(&mut app, "ERROR");
+        app.go_top();
+        app.next_match();
+        assert_eq!(hit_total(&app), 4, "{:?}", app.status);
+
+        // Switching the search must not reuse the previous hit list.
+        search(&mut app, "WARN");
+        app.go_top();
+        app.next_match();
+        assert_eq!(hit_total(&app), 3, "{:?}", app.status);
+
+        // Filtering shrinks the view, so cached positions would be out of range.
+        app.toggle_filter();
+        assert!(app.filter_on);
+        app.go_top();
+        app.next_match();
+        assert_eq!(hit_total(&app), 3, "{:?}", app.status);
+        assert!(app.file().view_pos < app.file().view.len());
+        app.toggle_filter();
+
+        // With the search cleared, hits come from highlight rules instead.
+        app.clear_search();
+        app.begin_input(InputKind::Keyword);
+        app.push_input_chars("Retrying".chars());
+        app.confirm_input();
+        run_rescan_to_completion(&mut app);
+        app.go_top();
+        app.next_match();
+        assert_eq!(hit_total(&app), 2, "{:?}", app.status);
+
+        // Removing the rule leaves no highlights at all.
+        app.remove_last_rule();
+        run_rescan_to_completion(&mut app);
+        app.next_match();
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("no highlight matches"),
+            "{:?}",
+            app.status
+        );
+    }
+
+    /// `n`/`N` must not re-scan the file on every press: the first jump builds the
+    /// hit list, later ones reuse it. Compares the cost of one cold jump against
+    /// many warm ones, so the bound is a ratio, not a wall-clock budget.
+    #[test]
+    fn match_nav_reuses_cached_positions() {
+        let mut app = app_with_paths(&["samples/big.log"]);
+        app.begin_input(InputKind::Search);
+        app.push_input_chars("connection".chars());
+        app.confirm_input();
+        assert!(app.file().match_positions.is_none(), "cache starts empty");
+
+        let cold = std::time::Instant::now();
+        app.next_match();
+        let cold = cold.elapsed().max(std::time::Duration::from_nanos(1));
+        assert!(
+            app.file().match_positions.is_some(),
+            "first jump should populate the cache"
+        );
+
+        let warm = std::time::Instant::now();
+        for _ in 0..50 {
+            app.next_match();
+        }
+        let warm = warm.elapsed() / 50;
+
+        assert!(
+            warm < cold,
+            "cached jump ({warm:?}) should beat the cold one ({cold:?})"
         );
     }
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use ratatui::style::Color;
-use regex::{Regex, RegexBuilder};
+use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
 
 use crate::cli::Cli;
 use crate::theme::Theme;
@@ -36,6 +36,22 @@ pub fn compile_regex(pattern: &str) -> Result<Regex> {
         .nest_limit(REGEX_NEST_LIMIT)
         .build()
         .context("failed to compile regex (size/nest limit?)")
+}
+
+/// Compile many patterns into one [`RegexSet`] under the same budgets as
+/// [`compile_regex`]. A set matches every pattern in a single pass, which is how
+/// the signature scan avoids running N regexes per line.
+pub fn compile_regex_set<I, S>(patterns: I) -> Result<RegexSet>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    RegexSetBuilder::new(patterns)
+        .size_limit(REGEX_SIZE_LIMIT)
+        .dfa_size_limit(REGEX_SIZE_LIMIT)
+        .nest_limit(REGEX_NEST_LIMIT)
+        .build()
+        .context("failed to compile regex set (size/nest limit?)")
 }
 
 /// Compile a single keyword or regex into a colored [`Rule`].
