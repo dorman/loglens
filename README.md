@@ -76,7 +76,7 @@ First moves once you're in:
 | `S`   | scan everything for known-bad signatures, ranked by severity |
 | `s`   | reopen the findings panel (no rescan) |
 | `p`/`P` | next / previous finding (no panel needed) |
-| `e`   | export findings to `loglens-findings.md` |
+| `e`   | export findings to `loglens-findings.md` (numbered if it exists) |
 | `a`   | add a keyword highlight (each gets its own color) |
 | `/`   | search (`Enter` first hit · `n`/`N` walk) |
 | `:`   | jump to a line number |

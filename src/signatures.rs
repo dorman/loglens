@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use regex::Regex;
+use regex::RegexSet;
 
 use crate::rules;
 
@@ -35,19 +35,59 @@ impl Severity {
     }
 }
 
-/// A compiled detection signature: what to match plus why it matters.
+/// What a detection means: severity plus the plain-English explanation shown in
+/// the findings panel. The pattern itself lives in the [`Library`]'s `RegexSet`.
 pub struct Signature {
     pub severity: Severity,
     pub category: &'static str,
     pub title: &'static str,
     pub explain: &'static str,
-    pub regex: Regex,
+}
+
+/// The built-in detection library: signature metadata plus a single [`RegexSet`]
+/// holding every pattern.
+///
+/// The set is the only compiled form of the patterns, so it cannot drift out of
+/// step with the metadata, and [`Library::matches`] tests a line against all
+/// signatures in one pass instead of running each regex separately.
+pub struct Library {
+    signatures: Vec<Signature>,
+    set: RegexSet,
+}
+
+impl Library {
+    /// Build the built-in library. Panics on a malformed built-in pattern —
+    /// that is a bug in this file, not something a user can trigger.
+    pub fn builtin() -> Self {
+        let (signatures, patterns) = builtin_defs();
+        let set = rules::compile_regex_set(&patterns)
+            .unwrap_or_else(|e| panic!("invalid built-in signature set: {e}"));
+        debug_assert_eq!(signatures.len(), set.len());
+        Self { signatures, set }
+    }
+
+    /// Indices of every signature matching `line`, ascending.
+    pub fn matches<'a>(&'a self, line: &str) -> impl Iterator<Item = usize> + 'a {
+        self.set.matches(line).into_iter()
+    }
+}
+
+/// Lets existing `signatures[finding.sig]` call sites keep working.
+impl std::ops::Index<usize> for Library {
+    type Output = Signature;
+
+    fn index(&self, i: usize) -> &Signature {
+        &self.signatures[i]
+    }
 }
 
 /// The built-in detection library. Curated for general logs plus the kinds of
 /// signals that show up in endpoint/anti-virus diagnostic bundles. All patterns
 /// are case-insensitive.
-pub fn builtin() -> Vec<Signature> {
+///
+/// Returns metadata and patterns as parallel lists, in the order the `RegexSet`
+/// will report match indices.
+fn builtin_defs() -> (Vec<Signature>, Vec<&'static str>) {
     use Severity::*;
     // (severity, category, title, explanation, pattern)
     const DEFS: &[(Severity, &str, &str, &str, &str)] = &[
@@ -147,44 +187,146 @@ pub fn builtin() -> Vec<Signature> {
         // Use keyword highlights (`a` / `-k ERROR,WARN`) for that volume instead.
     ];
 
-    DEFS.iter()
-        .map(|(sev, cat, title, explain, pat)| {
-            let regex = rules::compile_regex(pat).unwrap_or_else(|e| {
-                panic!("invalid built-in signature '{title}': {e}");
-            });
-            Signature {
-                severity: *sev,
-                category: cat,
-                title,
-                explain,
-                regex,
-            }
+    let signatures = DEFS
+        .iter()
+        .map(|(sev, cat, title, explain, _)| Signature {
+            severity: *sev,
+            category: cat,
+            title,
+            explain,
         })
-        .collect()
+        .collect();
+    let patterns = DEFS.iter().map(|(_, _, _, _, pat)| *pat).collect();
+    (signatures, patterns)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn sigs() -> Vec<Signature> {
-        builtin()
+    /// The signature metadata, as defined in this file.
+    fn defs() -> Vec<Signature> {
+        builtin_defs().0
     }
 
     fn titles_matching(line: &str) -> Vec<&'static str> {
-        sigs()
-            .iter()
-            .filter(|s| s.regex.is_match(line))
-            .map(|s| s.title)
-            .collect()
+        let lib = Library::builtin();
+        lib.matches(line).map(|i| lib[i].title).collect()
     }
 
     #[test]
     fn all_builtin_signatures_compile() {
-        let sigs = sigs();
-        assert!(!sigs.is_empty());
-        // Every definition must compile — builtin() panics otherwise.
-        assert!(sigs.iter().any(|s| s.severity == Severity::Critical));
+        let defs = defs();
+        assert!(!defs.is_empty());
+        // Every pattern must compile — Library::builtin panics otherwise.
+        let _ = Library::builtin();
+        assert!(defs.iter().any(|s| s.severity == Severity::Critical));
+    }
+
+    /// One representative line per built-in signature, plus lines that must not
+    /// match anything. `None` means "no findings at all".
+    const EXPECTED: &[(&str, Option<&str>)] = &[
+        // NB: this pattern wants the verb before the noun. The reversed phrasing
+        // ("Real-time protection was disabled") does *not* match today — a real
+        // coverage gap in the signature, left alone here because widening it
+        // changes what gets flagged in customer logs.
+        (
+            "ERROR Disabled real-time protection via registry edit",
+            Some("Security protection disabled/tampered"),
+        ),
+        (
+            "WARN  Suspicious process detected: powershell.exe -enc <base64>",
+            Some("Encoded PowerShell command"),
+        ),
+        (
+            "ALERT Blocked process injection attempt targeting explorer.exe",
+            Some("Process injection / hollowing"),
+        ),
+        (
+            "DEBUG rundll32.exe launched with unusual arguments",
+            Some("Living-off-the-land binary"),
+        ),
+        (
+            "ERROR License validation failed: rollback detected on system clock",
+            Some("Clock / time rollback detected"),
+        ),
+        (
+            "ERROR Certificate validation failed for update.example.com",
+            Some("Certificate validation failure"),
+        ),
+        (
+            "ERROR Signature database corrupt, failed to load definitions",
+            Some("Signature/definition database corrupt"),
+        ),
+        (
+            "FATAL unhandled exception in scan engine (core dumped)",
+            Some("Fatal error / crash"),
+        ),
+        (
+            "ERROR out of memory while building index",
+            Some("Resource exhaustion"),
+        ),
+        (
+            "WARN  connection refused to telemetry.example.com",
+            Some("Connection refused / reset"),
+        ),
+        (
+            "ERROR update failed: could not reach the update server",
+            Some("Update failure"),
+        ),
+        (
+            "ERROR Installer rolling back changes (error 1603)",
+            Some("Installer rollback"),
+        ),
+        (
+            "ERROR access denied opening quarantine store (0x80070005)",
+            Some("Access denied / unauthorized"),
+        ),
+        // Clean lines: a generic ERROR is highlight material, not a finding.
+        (
+            "2026-07-22 10:00:01 INFO  Starting AV agent service v14.2.1",
+            None,
+        ),
+        (
+            "2026-07-22 10:00:07 ERROR something went sideways in module X",
+            None,
+        ),
+        ("plain text with no interesting tokens at all", None),
+        ("", None),
+    ];
+
+    /// Guards the index→metadata pairing. The `RegexSet` reports only indices, so
+    /// a change that let patterns drift out of step with the metadata beside them
+    /// would keep matching lines while attaching the *wrong* explanation to them.
+    /// Checking a known line resolves to its own title is what catches that; the
+    /// coverage assertion stops a new signature from being added untested.
+    #[test]
+    fn every_signature_reports_its_own_title() {
+        let lib = Library::builtin();
+        for (line, expected) in EXPECTED {
+            let titles: Vec<&str> = lib.matches(line).map(|i| lib[i].title).collect();
+            match expected {
+                // Other signatures may also match — overlap is by design — but the
+                // one describing this line must be among them.
+                Some(want) => assert!(
+                    titles.contains(want),
+                    "expected {want:?} for {line:?}, got {titles:?}"
+                ),
+                None => assert!(
+                    titles.is_empty(),
+                    "expected no findings for {line:?}, got {titles:?}"
+                ),
+            }
+        }
+
+        // Every built-in signature needs a line in the table above.
+        for sig in defs() {
+            assert!(
+                EXPECTED.iter().any(|(_, want)| *want == Some(sig.title)),
+                "signature {:?} has no line in EXPECTED — add one",
+                sig.title
+            );
+        }
     }
 
     #[test]
@@ -276,7 +418,7 @@ mod tests {
             titles_matching(warn_line)
         );
         assert!(
-            !sigs()
+            !defs()
                 .iter()
                 .any(|s| s.title == "Generic error" || s.title == "Warning")
         );
@@ -285,7 +427,7 @@ mod tests {
     #[test]
     fn builtin_signatures_are_medium_or_higher() {
         assert!(
-            sigs().iter().all(|s| s.severity >= Severity::Medium),
+            defs().iter().all(|s| s.severity >= Severity::Medium),
             "scan signatures should stay at Medium+ to avoid findings flood"
         );
     }

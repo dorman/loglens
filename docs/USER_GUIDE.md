@@ -233,7 +233,11 @@ status shows `finding i/n · SEV · title · file:line`). Press **`s`** to reope
 the findings panel without rescanning (status bar shows `N fd` while findings
 are cached). Press **`e`** anytime after a scan to write `loglens-findings.md`
 in the current directory — a short triage dump with severity, location, why it
-matters, and the matched line.
+matters, and the matched line. An earlier export is never overwritten: if
+`loglens-findings.md` already exists the next one becomes
+`loglens-findings-2.md`, then `-3.md`, and the status line reports the exact
+path written. The status shows the absolute path, since the export lands in the
+directory loglens was started from, not necessarily where the logs came from.
 
 Long scans (large bundles) show a live progress bar with a running findings
 count — press `Esc` or `q` to cancel. Cancelling clears any partial severity
