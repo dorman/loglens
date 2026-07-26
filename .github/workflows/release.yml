@@ -101,6 +101,16 @@ jobs:
           find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} assets/ \;
           ls -la assets
 
+      # Publish checksums alongside the archives so `scripts/install.sh` (and
+      # anyone downloading by hand) can verify what they fetched.
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
