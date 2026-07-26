@@ -165,6 +165,10 @@ pub struct LogFile {
 
 impl LogFile {
     fn load(path: &Path, name: String, rules: &[Rule]) -> Result<Self> {
+        // Prevent path traversal attacks by rejecting paths containing '..'.
+        if path.components().any(|c| c == std::path::Component::ParentDir) {
+            anyhow::bail!("Invalid input: {}", path.display());
+        }
         // Cap the read so a direct open (CLI/browser) cannot bypass the folder
         // collection size limit and OOM the process. `take(limit+1)` also closes
         // the race where a file grows between a metadata check and the read.
