@@ -11,11 +11,10 @@ on:
         required: false
         default: ""
 
-# Default to read-only for every job; `publish` opts into write below. The
-# build matrix compiles third-party crate code on four runners and never needs
-# to write back to the repository.
-permissions:
-  contents: read
+# No job gets any token scope by default; each opts into exactly what it needs
+# below. A job added later without a `permissions:` block therefore fails
+# closed rather than silently inheriting access.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,6 +23,10 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Checkout only. The matrix compiles third-party crate code on four
+    # runners and never writes back to the repository.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
