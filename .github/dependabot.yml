@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # Workflow actions are pinned to commit SHAs, so security fixes upstream no
+  # longer arrive on their own. Dependabot understands the `# vX.Y.Z` comments
+  # and bumps both the SHA and the comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
