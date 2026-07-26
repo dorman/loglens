@@ -92,7 +92,13 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     );
     if let Some(cwd) = &cfg.browser_cwd {
         // Path may contain '=' — only the first '=' is the separator on load.
-        body.push_str(&format!("browser_cwd={}\n", cwd.display()));
+        // A path containing a newline (legal on Unix) would otherwise write extra
+        // `key=value` lines and let a directory name rewrite other preferences,
+        // so such a path is simply not persisted.
+        let text = cwd.display().to_string();
+        if !text.chars().any(|c| c.is_control()) {
+            body.push_str(&format!("browser_cwd={text}\n"));
+        }
     }
     fs::write(path, body)
 }
@@ -174,6 +180,43 @@ mod tests {
             Some(PathBuf::from("/tmp/a=b"))
         );
         assert_eq!(parse("browser_cwd=\n").browser_cwd, None);
+    }
+
+    #[test]
+    fn save_skips_browser_cwd_containing_control_characters() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-config-inject-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+
+        // A directory name with an embedded newline must not be able to inject
+        // another preference line into the config file.
+        save(&Config {
+            ignore_case: false,
+            show_legend: false,
+            browser_cwd: Some(PathBuf::from("/tmp/evil\nignore_case=true")),
+        })
+        .unwrap();
+        let text = fs::read_to_string(dir.join("config")).unwrap();
+        assert!(!text.contains("browser_cwd"));
+        assert!(text.contains("ignore_case=false"));
+        assert_eq!(load().browser_cwd, None);
+        assert!(!load().ignore_case);
+
+        unsafe {
+            env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1700,7 +1700,10 @@ impl App {
         let path = PathBuf::from("loglens-findings.md");
         match self.export_findings_to(&path) {
             Ok(n) => {
-                self.status = Some(format!("exported {n} findings → {}", path.display()));
+                // Report where the file actually landed: the export goes to the
+                // process cwd, which is rarely the directory the logs came from.
+                let shown = path.canonicalize().unwrap_or_else(|_| path.clone());
+                self.status = Some(format!("exported {n} findings → {}", shown.display()));
             }
             Err(e) => {
                 self.status = Some(format!("export failed: {e}"));

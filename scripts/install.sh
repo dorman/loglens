@@ -63,6 +63,7 @@ if [[ "$http_code" != "200" ]]; then
 fi
 # Prefer the tagged browser_download_url matching our asset name.
 url="$(sed -n "s/.*\"browser_download_url\": \"\\([^\"]*${asset}\\)\"/\1/p" "$http_body" | head -n1)"
+sums_url="$(sed -n "s/.*\"browser_download_url\": \"\\([^\"]*SHA256SUMS\\)\"/\1/p" "$http_body" | head -n1)"
 rm -f "$http_body"
 if [[ -z "$url" ]]; then
   echo "error: could not find asset ${asset} in the latest GitHub release." >&2
@@ -75,6 +76,35 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading ${url}"
 curl -fsSL "$url" -o "$tmp/$asset"
+
+# Verify the archive against the release's SHA256SUMS before unpacking it. This
+# is what turns "curl | bash" from "trust the transport" into "trust the release".
+if [[ -n "$sums_url" ]] && command -v sha256sum >/dev/null 2>&1; then
+  verifier=(sha256sum -c -)
+elif [[ -n "$sums_url" ]] && command -v shasum >/dev/null 2>&1; then
+  verifier=(shasum -a 256 -c -)
+else
+  verifier=()
+fi
+if [[ -n "$sums_url" && ${#verifier[@]} -gt 0 ]]; then
+  echo "Verifying checksum…"
+  curl -fsSL "$sums_url" -o "$tmp/SHA256SUMS"
+  expected="$(awk -v a="$asset" '$2 == a || $2 == "*"a {print $1}' "$tmp/SHA256SUMS" | head -n1)"
+  if [[ -z "$expected" ]]; then
+    echo "error: ${asset} is not listed in the release SHA256SUMS — refusing to install." >&2
+    exit 1
+  fi
+  if ! (cd "$tmp" && printf '%s  %s\n' "$expected" "$asset" | "${verifier[@]}" >/dev/null 2>&1); then
+    echo "error: checksum mismatch for ${asset} — refusing to install." >&2
+    echo "       Re-run, or install from source: cargo install --git https://github.com/${REPO} --locked" >&2
+    exit 1
+  fi
+elif [[ -z "$sums_url" ]]; then
+  echo "warning: release has no SHA256SUMS asset — cannot verify the download." >&2
+else
+  echo "warning: neither sha256sum nor shasum found — cannot verify the download." >&2
+fi
+
 tar -xzf "$tmp/$asset" -C "$tmp"
 bin="$(find "$tmp" -type f -name loglens | head -n1)"
 if [[ -z "$bin" ]]; then

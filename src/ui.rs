@@ -423,13 +423,23 @@ fn shift_spans_left(spans: &[MatchSpan], byte_off: usize) -> Vec<MatchSpan> {
 }
 
 /// Split one line into styled spans, layering search matches over rule matches.
+///
+/// `text` is the slice actually painted (already cut by horizontal scroll);
+/// `full_line` is the whole log line and is used only for level-tint detection,
+/// so panning right does not change a line's ERROR/WARN color.
 fn render_line_spans<'a>(
     text: &'a str,
+    full_line: &str,
     rule_spans: &[MatchSpan],
     rules: &[Rule],
     search: Option<&Regex>,
     theme: &Theme,
 ) -> Vec<Span<'a>> {
+    // The level tint is a property of the line, not of each segment: computing it
+    // once here (instead of per span) keeps a long line with many matches from
+    // rescanning the line hundreds of times per frame.
+    let base_fg = theme::level_fg(full_line, theme);
+
     let len = text.len();
     if len == 0 {
         return vec![Span::raw("")];
@@ -449,10 +459,7 @@ fn render_line_spans<'a>(
     };
 
     if rule_spans.is_empty() && search_ranges.is_empty() {
-        return vec![Span::styled(
-            text,
-            Style::default().fg(theme::level_fg(text, theme)),
-        )];
+        return vec![Span::styled(text, Style::default().fg(base_fg))];
     }
 
     let mut points: BTreeSet<usize> = BTreeSet::new();
@@ -497,10 +504,7 @@ fn render_line_spans<'a>(
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            spans.push(Span::styled(
-                &text[a..b],
-                Style::default().fg(theme::level_fg(text, theme)),
-            ));
+            spans.push(Span::styled(&text[a..b], Style::default().fg(base_fg)));
         }
     }
     spans
@@ -514,23 +518,45 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
     let block = t.panel(&log_title(app, file), true);
 
     if file.view.is_empty() {
-        let msg = vec![
-            Line::from(""),
-            Line::from("  No lines match the current filter."),
-            Line::from(vec![
-                Span::raw("  Press  "),
-                Span::styled(
-                    "f",
-                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  to exit filter, or  "),
-                Span::styled(
-                    "/",
-                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  to search."),
-            ]),
-        ];
+        // An empty view means "filtered everything out" only when a filter is on;
+        // a genuinely empty file must not be blamed on the filter.
+        let msg = if file.lines.is_empty() {
+            vec![
+                Line::from(""),
+                Line::from("  This file has no lines."),
+                Line::from(vec![
+                    Span::raw("  Press  "),
+                    Span::styled(
+                        "o",
+                        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  to open another log, or  "),
+                    Span::styled(
+                        "w",
+                        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  to close this tab."),
+                ]),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from("  No lines match the current filter."),
+                Line::from(vec![
+                    Span::raw("  Press  "),
+                    Span::styled(
+                        "f",
+                        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  to exit filter, or  "),
+                    Span::styled(
+                        "/",
+                        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  to search."),
+                ]),
+            ]
+        };
         frame.render_widget(
             Paragraph::new(msg)
                 .style(Style::default().fg(t.text_dim))
@@ -572,7 +598,9 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
         if h_scroll > 0 {
             spans.push(Span::styled("‹", Style::default().fg(t.text_dim)));
         }
-        spans.extend(render_line_spans(text, &shifted, &app.rules, search, t));
+        spans.extend(render_line_spans(
+            text, full, &shifted, &app.rules, search, t,
+        ));
 
         let mut line = Line::from(spans);
         if is_cursor {
@@ -1195,7 +1223,14 @@ mod tests {
             rule: 0,
         }];
         let search = Regex::new("ERR").unwrap();
-        let out = render_line_spans("ERROR happened", &spans, &[rule], Some(&search), &theme);
+        let out = render_line_spans(
+            "ERROR happened",
+            "ERROR happened",
+            &spans,
+            &[rule],
+            Some(&search),
+            &theme,
+        );
         assert!(out.len() >= 2);
         // The search-styled prefix should use SEARCH_BG.
         assert_eq!(out[0].style.bg, Some(theme.search_bg));
@@ -1211,7 +1246,7 @@ mod tests {
             end: 2,
             rule: 0,
         }];
-        let out = render_line_spans("字abc", &spans, &[rule], None, &theme);
+        let out = render_line_spans("字abc", "字abc", &spans, &[rule], None, &theme);
         assert!(!out.is_empty());
         let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, "字abc");
@@ -1219,7 +1254,7 @@ mod tests {
 
     #[test]
     fn render_line_spans_empty_line() {
-        let out = render_line_spans("", &[], &[], None, &Theme::dark());
+        let out = render_line_spans("", "", &[], &[], None, &Theme::dark());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].content.as_ref(), "");
     }
@@ -1227,7 +1262,14 @@ mod tests {
     #[test]
     fn render_line_spans_applies_level_error_tint() {
         let theme = Theme::dark();
-        let out = render_line_spans("2026 ERROR failed", &[], &[], None, &theme);
+        let out = render_line_spans(
+            "2026 ERROR failed",
+            "2026 ERROR failed",
+            &[],
+            &[],
+            None,
+            &theme,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].style.fg, Some(theme.level_error));
     }
@@ -1244,9 +1286,60 @@ mod tests {
             end: 5,
             rule: 0,
         }];
-        let out = render_line_spans(text, &spans, &[rule], None, &theme);
+        let out = render_line_spans(text, text, &spans, &[rule], None, &theme);
         let joined: String = out.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(joined, text);
         assert!(!joined.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn render_line_spans_keeps_level_tint_when_panned_past_the_level_token() {
+        let theme = Theme::dark();
+        let full = "2026-07-22 10:00:07 ERROR failed to connect to update server";
+        // Horizontal scroll cuts the ERROR token out of the painted slice; the
+        // line must keep its error tint instead of falling back to plain text.
+        let painted = &full[40..];
+        assert!(!painted.contains("ERROR"));
+        let out = render_line_spans(painted, full, &[], &[], None, &theme);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].style.fg, Some(theme.level_error));
+    }
+
+    /// Regression guard: the level tint is a per-line property, so it must be
+    /// computed once — not once per styled segment. Painting it per segment made
+    /// a long line with many matches rescan the whole line hundreds of times per
+    /// frame (~13 ms per line in release, i.e. a visibly frozen viewport).
+    ///
+    /// Compares a busy line against the same line rendered as a single span, so
+    /// the bound is a ratio and does not depend on machine speed or build profile.
+    #[test]
+    fn render_line_spans_stays_fast_on_a_long_busy_line() {
+        let theme = Theme::dark();
+        let mut line = String::from("2026-07-22 10:00:00 ERROR ");
+        while line.len() < 32 * 1024 {
+            line.push_str("connection refused to host xyz; retrying now. ");
+        }
+        let search = Regex::new("(?i)retrying").unwrap();
+
+        let time_it = |search: Option<&Regex>| {
+            let start = std::time::Instant::now();
+            for _ in 0..20 {
+                let spans = render_line_spans(&line, &line, &[], &[], search, &theme);
+                assert!(!spans.is_empty());
+            }
+            start.elapsed().max(std::time::Duration::from_nanos(1))
+        };
+
+        // One span, one level scan: the floor for this line.
+        let plain = time_it(None);
+        // MAX_SEARCH_RANGES segments: must add segmentation work, not 256 more
+        // full-line scans.
+        let busy = time_it(Some(&search));
+        let ratio = busy.as_secs_f64() / plain.as_secs_f64();
+        assert!(
+            ratio < 20.0,
+            "busy line cost {ratio:.1}× the single-span line ({busy:?} vs {plain:?}) \
+             — level tint recomputed per span?"
+        );
     }
 }

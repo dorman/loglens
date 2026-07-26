@@ -63,7 +63,10 @@ When the public release lands:
 
 - Download OS/CPU archives from
   [GitHub Releases](https://github.com/dorman/loglens/releases), or run
-  `scripts/install.sh` on Linux/macOS.
+  `scripts/install.sh` on Linux/macOS. Each release also ships a `SHA256SUMS`
+  asset; the installer verifies the archive against it and refuses to install on
+  a mismatch (verify manually with `sha256sum -c SHA256SUMS` after a hand
+  download).
 - Or: `cargo install loglens --locked` from crates.io.
 
 ### Publishing a release (maintainers — after testing)
@@ -119,7 +122,10 @@ of a file above 50 MiB is rejected too.
 
 Zip archives are extracted to a temporary directory and hardened against
 hostile input (path traversal / zip-slip, archive-size and extract-size
-caps, entry-count limits). Auto-collection never follows symlinks and stops
+caps, entry-count limits). The extract directory is created fresh — never
+reusing an existing path — and on Linux/macOS it is owner-only (`0700`), so
+bundle contents are not readable by other users on a shared machine. It is
+removed when loglens exits. Auto-collection never follows symlinks and stops
 at depth 32 / 2,000 files per resolve — see [Limits & safety](#limits--safety).
 
 ### From inside the TUI (the file browser)
@@ -377,6 +383,7 @@ memory or disk. Caps that most often matter:
 | Zip entries scanned | **10,000** | Remainder ignored |
 | Dir depth / files per resolve | **32** / **2,000** | Deeper or extra files skipped |
 | Symlinks (auto-collect) | never followed | Avoids cycles and escape from the bundle |
+| Zip extract directory | fresh, `0700` on Unix | Not reused, not world-readable; removed on exit |
 | Lines / file · bytes / line | **250,000** · **32 KiB** | Extra lines dropped; long lines truncated with `…` |
 | Open tabs · session lines | **500** · **1,000,000** | Further opens skipped (`open cap reached…`) |
 | Highlight rules · regex source | **64** · **512 B** | Add rejected with a status message |

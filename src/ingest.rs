@@ -170,6 +170,23 @@ fn path_within(root: &Path, candidate: &Path) -> bool {
     true
 }
 
+/// Create the extraction root, owner-only and never reusing an existing path.
+///
+/// `create_dir` (not `create_dir_all`) fails if the path already exists, so a
+/// pre-created directory or symlink planted in a shared `/tmp` cannot capture the
+/// extract. On Unix the mode is `0o700` so the bundle — which routinely holds
+/// customer logs — is not world-readable while the session runs.
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
 /// Extract text logs from a zip archive into a unique temp directory, then
 /// collect them. The temp directory is returned so the app can delete it on exit.
 ///
@@ -212,7 +229,7 @@ fn extract_zip(path: &Path) -> Result<ResolveOutcome> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let root = std::env::temp_dir().join(format!("loglens-{stem}-{nonce}"));
-    fs::create_dir_all(&root)
+    create_private_dir(&root)
         .with_context(|| format!("failed to create temp dir '{}'", root.display()))?;
 
     let mut total_written: u64 = 0;
@@ -295,6 +312,43 @@ mod tests {
             Path::new("/tmp/loglens-root/foo/../../other")
         ));
         assert!(!path_within(root, Path::new("/tmp/loglens-root/../other")));
+    }
+
+    #[test]
+    fn extract_root_is_private_and_never_reuses_an_existing_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-test-perms-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("bundle.zip");
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            zip.start_file("a.log", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"connection refused\n").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let outcome = extract_zip(&zip_path).unwrap();
+        let root = outcome.temp_dir.expect("temp dir");
+
+        // A second extract must not land in an existing directory.
+        assert!(create_private_dir(&root).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "extracted bundles must not be world-readable");
+        }
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
