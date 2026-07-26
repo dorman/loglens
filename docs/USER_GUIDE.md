@@ -64,9 +64,11 @@ When the public release lands:
 - Download OS/CPU archives from
   [GitHub Releases](https://github.com/dorman/loglens/releases), or run
   `scripts/install.sh` on Linux/macOS. Each release also ships a `SHA256SUMS`
-  asset; the installer verifies the archive against it and refuses to install on
-  a mismatch (verify manually with `sha256sum -c SHA256SUMS` after a hand
-  download).
+  asset. The installer verifies the archive against it and **refuses to install**
+  if the hash does not match, if the asset is not listed, if the release has no
+  `SHA256SUMS`, or if no checksum tool is available — it never silently installs
+  an unverified binary. Set `SKIP_VERIFY=1` to override that at your own risk.
+  After a manual download, verify with `sha256sum -c SHA256SUMS`.
 - Or: `cargo install loglens --locked` from crates.io.
 
 ### Publishing a release (maintainers — after testing)

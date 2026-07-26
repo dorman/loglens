@@ -6,6 +6,10 @@ set -euo pipefail
 REPO="dorman/loglens"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
+# Checksum verification is mandatory: this script installs an executable, often
+# with sudo. Set SKIP_VERIFY=1 to install an unverified download anyway (you are
+# then trusting the transport alone — not recommended).
+SKIP_VERIFY="${SKIP_VERIFY:-0}"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -62,8 +66,14 @@ if [[ "$http_code" != "200" ]]; then
   exit 1
 fi
 # Prefer the tagged browser_download_url matching our asset name.
-url="$(sed -n "s/.*\"browser_download_url\": \"\\([^\"]*${asset}\\)\"/\1/p" "$http_body" | head -n1)"
-sums_url="$(sed -n "s/.*\"browser_download_url\": \"\\([^\"]*SHA256SUMS\\)\"/\1/p" "$http_body" | head -n1)"
+# The trailing `.*` matters: without it sed keeps whatever follows the closing
+# quote on that line (a `,` or `}`) and glues it onto the URL. `: *` tolerates
+# both pretty-printed and compact JSON.
+asset_url() {
+  sed -n "s/.*\"browser_download_url\": *\"\\([^\"]*$1\\)\".*/\\1/p" "$http_body" | head -n1
+}
+url="$(asset_url "$asset")"
+sums_url="$(asset_url SHA256SUMS)"
 rm -f "$http_body"
 if [[ -z "$url" ]]; then
   echo "error: could not find asset ${asset} in the latest GitHub release." >&2
@@ -79,30 +89,55 @@ curl -fsSL "$url" -o "$tmp/$asset"
 
 # Verify the archive against the release's SHA256SUMS before unpacking it. This
 # is what turns "curl | bash" from "trust the transport" into "trust the release".
-if [[ -n "$sums_url" ]] && command -v sha256sum >/dev/null 2>&1; then
+# Anything that prevents verification is a hard failure, not a warning: silently
+# installing an unverified binary is the exact outcome this guards against.
+source_fallback() {
+  echo "       Install from source instead:" >&2
+  echo "         cargo install --git https://github.com/${REPO} --locked" >&2
+}
+
+if command -v sha256sum >/dev/null 2>&1; then
   verifier=(sha256sum -c -)
-elif [[ -n "$sums_url" ]] && command -v shasum >/dev/null 2>&1; then
+elif command -v shasum >/dev/null 2>&1; then
   verifier=(shasum -a 256 -c -)
 else
   verifier=()
 fi
-if [[ -n "$sums_url" && ${#verifier[@]} -gt 0 ]]; then
+
+if [[ "$SKIP_VERIFY" == "1" ]]; then
+  echo "warning: SKIP_VERIFY=1 — installing ${asset} without checking its checksum." >&2
+else
+  if [[ -z "$sums_url" ]]; then
+    echo "error: this release publishes no SHA256SUMS asset, so ${asset} cannot be" >&2
+    echo "       verified — refusing to install an unverified binary." >&2
+    echo "       Override with SKIP_VERIFY=1 if you accept that risk." >&2
+    source_fallback
+    exit 1
+  fi
+  if [[ ${#verifier[@]} -eq 0 ]]; then
+    echo "error: neither 'sha256sum' nor 'shasum' is available, so ${asset} cannot be" >&2
+    echo "       verified — refusing to install an unverified binary." >&2
+    echo "       Install coreutils (or set SKIP_VERIFY=1 to accept that risk)." >&2
+    source_fallback
+    exit 1
+  fi
+
   echo "Verifying checksum…"
   curl -fsSL "$sums_url" -o "$tmp/SHA256SUMS"
+  # Accept both GNU ("hash  name") and BSD ("hash *name") checksum formats.
   expected="$(awk -v a="$asset" '$2 == a || $2 == "*"a {print $1}' "$tmp/SHA256SUMS" | head -n1)"
   if [[ -z "$expected" ]]; then
     echo "error: ${asset} is not listed in the release SHA256SUMS — refusing to install." >&2
+    source_fallback
     exit 1
   fi
   if ! (cd "$tmp" && printf '%s  %s\n' "$expected" "$asset" | "${verifier[@]}" >/dev/null 2>&1); then
     echo "error: checksum mismatch for ${asset} — refusing to install." >&2
-    echo "       Re-run, or install from source: cargo install --git https://github.com/${REPO} --locked" >&2
+    echo "       The download does not match the published release hash." >&2
+    source_fallback
     exit 1
   fi
-elif [[ -z "$sums_url" ]]; then
-  echo "warning: release has no SHA256SUMS asset — cannot verify the download." >&2
-else
-  echo "warning: neither sha256sum nor shasum found — cannot verify the download." >&2
+  echo "Checksum OK (sha256 ${expected:0:16}…)"
 fi
 
 tar -xzf "$tmp/$asset" -C "$tmp"
