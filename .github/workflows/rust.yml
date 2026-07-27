@@ -6,10 +6,10 @@ on:
   pull_request:
     branches: [ "master" ]
 
-# CI only needs to read the checked-out code; the release workflow is the only
-# one that writes anything back to the repository.
-permissions:
-  contents: read
+# No job gets any token scope by default; each opts into exactly what it needs
+# below. A job added later without a `permissions:` block therefore fails
+# closed rather than silently inheriting access. Matches release.yml.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +17,9 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    # Checkout only; nothing in this workflow writes back to the repository.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +64,8 @@ jobs:
   # the build matrix. It only reads Cargo.lock; it does not build the crate.
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -94,6 +99,8 @@ jobs:
   # a434eb2 and a789276 into an enforced rule rather than a one-off cleanup.
   workflows:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
