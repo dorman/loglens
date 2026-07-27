@@ -45,7 +45,11 @@ jobs:
             archive: zip
 
     steps:
+      # persist-credentials: false keeps the job token out of .git/config, so a
+      # later step cannot sweep it into a published archive. No job here pushes.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2026
@@ -53,10 +57,9 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: ${{ matrix.target }}
+      # Deliberately not caching. A restored cache is writable by any branch
+      # build, so reusing one here would let unreviewed code influence the
+      # binaries users download. Release builds start clean; CI keeps its cache.
 
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
@@ -98,6 +101,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
