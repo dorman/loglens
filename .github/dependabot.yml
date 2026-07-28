@@ -10,10 +10,17 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+    # Only minor and patch bumps are batched. Majors arrive as one PR each so
+    # a breaking change is attributable and revertable on its own: #34 grouped
+    # four majors, three of which touched release.yml, which no pull-request
+    # check exercises.
     groups:
-      actions:
+      actions-minor-patch:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: cargo
     directory: /
