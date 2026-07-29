@@ -70,6 +70,13 @@ impl Library {
     pub fn matches<'a>(&'a self, line: &str) -> impl Iterator<Item = usize> + 'a {
         self.set.matches(line).into_iter()
     }
+
+    /// How many signatures the library holds. Callers size per-signature
+    /// bookkeeping with this, so it must stay in step with the match indices
+    /// [`Self::matches`] yields.
+    pub fn signature_count(&self) -> usize {
+        self.signatures.len()
+    }
 }
 
 /// Lets existing `signatures[finding.sig]` call sites keep working.

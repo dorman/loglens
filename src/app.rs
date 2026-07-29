@@ -38,12 +38,20 @@ const EXPORT_STEM: &str = "loglens-findings";
 const EXPORT_DEFAULT_NAME: &str = "loglens-findings.md";
 const MAX_EXPORT_FILES: usize = 99;
 
-/// A single scan hit: signature `sig` matched line `line` of file `file`.
+/// Every hit of signature `sig` within file `file`, collapsed into one entry.
+///
+/// A noisy log repeats the same condition on hundreds of lines. One finding per
+/// line buried the few interesting hits under them and burned through
+/// [`MAX_FINDINGS`], so occurrences of a signature within a file are counted
+/// instead of listed. `line` is the first hit — the jump target — and `last` the
+/// final one, so the panel can show the span a condition covers.
 #[derive(Clone, Copy)]
 pub struct Finding {
     pub file: usize,
     pub line: usize,
     pub sig: usize,
+    pub last: usize,
+    pub count: usize,
 }
 
 /// In-progress scan state, advanced a chunk at a time so the UI can show a
@@ -54,6 +62,11 @@ pub struct ScanState {
     pub processed: usize,
     pub total: usize,
     pub findings: Vec<Finding>,
+    /// For the file under the cursor, where each signature's finding already
+    /// sits in `findings`. Files are scanned in order, so this is cleared when
+    /// the cursor advances — grouping needs no hashing, just one slot per
+    /// signature.
+    seen: Vec<Option<usize>>,
 }
 
 /// Fresh highlight-match data for one file, built off to the side during a
@@ -1507,6 +1520,7 @@ impl App {
             processed: 0,
             total,
             findings: Vec::new(),
+            seen: vec![None; self.signatures.signature_count()],
         });
         self.status = Some("scanning…".into());
         // An empty corpus finishes immediately.
@@ -1531,6 +1545,9 @@ impl App {
             if st.line >= flen {
                 st.file += 1;
                 st.line = 0;
+                // Groups are per (file, signature), so the next file starts with
+                // no signature seen.
+                st.seen.iter_mut().for_each(|s| *s = None);
                 continue;
             }
             let line = &self.files[st.file].lines[st.line];
@@ -1542,12 +1559,28 @@ impl App {
                 // Still record severity on the line even after the findings
                 // list is capped, so gutter markers remain useful.
                 best = Some(best.map_or(sig.severity, |b| b.max(sig.severity)));
-                if sig.severity >= MIN_FINDING_SEVERITY && st.findings.len() < MAX_FINDINGS {
-                    st.findings.push(Finding {
-                        file: st.file,
-                        line: st.line,
-                        sig: si,
-                    });
+                if sig.severity < MIN_FINDING_SEVERITY {
+                    continue;
+                }
+                match st.seen[si] {
+                    // Already a group for this signature in this file: count the
+                    // repeat and extend the span, adding no row.
+                    Some(idx) => {
+                        let f = &mut st.findings[idx];
+                        f.count += 1;
+                        f.last = st.line;
+                    }
+                    None if st.findings.len() < MAX_FINDINGS => {
+                        st.seen[si] = Some(st.findings.len());
+                        st.findings.push(Finding {
+                            file: st.file,
+                            line: st.line,
+                            sig: si,
+                            last: st.line,
+                            count: 1,
+                        });
+                    }
+                    None => {}
                 }
             }
             self.files[st.file].scan_severity[st.line] = best;
@@ -1575,16 +1608,25 @@ impl App {
 
         let c = self.severity_counts();
         let capped = total >= MAX_FINDINGS;
+        let hits = self.occurrence_count();
+        // Distinct findings and raw hits diverge whenever a condition repeats,
+        // so report both: "3 findings" alone hides that one of them fired 900
+        // times, which is usually the most interesting thing on screen.
+        let scale = if hits > total {
+            format!("{total} findings ({hits} hits)")
+        } else {
+            format!("{total} findings")
+        };
         self.status = Some(if total == 0 {
             "scan complete — nothing notable found".into()
         } else if capped {
             format!(
-                "scan: {total}+ findings (capped)  ({} crit, {} high, {} med, {} low, {} info)",
+                "scan: {scale} (capped)  ({} crit, {} high, {} med, {} low, {} info)",
                 c[4], c[3], c[2], c[1], c[0]
             )
         } else {
             format!(
-                "scan: {total} findings  ({} crit, {} high, {} med, {} low, {} info)",
+                "scan: {scale}  ({} crit, {} high, {} med, {} low, {} info)",
                 c[4], c[3], c[2], c[1], c[0]
             )
         });
@@ -1632,12 +1674,20 @@ impl App {
     }
 
     /// Counts indexed by `Severity as usize` (Info=0 .. Critical=4).
+    /// Distinct findings per severity — one per (file, signature) group, not one
+    /// per matching line. See [`Self::occurrence_count`] for raw hits.
     pub fn severity_counts(&self) -> [usize; 5] {
         let mut c = [0usize; 5];
         for f in &self.findings {
             c[self.signatures[f.sig].severity as usize] += 1;
         }
         c
+    }
+
+    /// Total matching lines across every finding. Equals the number of findings
+    /// only when nothing repeated.
+    pub fn occurrence_count(&self) -> usize {
+        self.findings.iter().map(|f| f.count).sum()
     }
 
     pub fn findings_move(&mut self, delta: isize) {
@@ -1808,9 +1858,11 @@ impl App {
         let c = self.severity_counts();
         let mut out = String::new();
         out.push_str("# loglens scan findings\n\n");
+        let hits = self.occurrence_count();
         out.push_str(&format!(
-            "{} findings · {} crit · {} high · {} med · {} low · {} info\n\n",
+            "{} findings · {} matching lines · {} crit · {} high · {} med · {} low · {} info\n\n",
             self.findings.len(),
+            hits,
             c[4],
             c[3],
             c[2],
@@ -1846,6 +1898,14 @@ impl App {
             ));
             out.push_str(&format!("- **location:** `{file_name}:{}`\n", f.line + 1));
             out.push_str(&format!("- **category:** {}\n", sig.category));
+            if f.count > 1 {
+                out.push_str(&format!(
+                    "- **occurrences:** {} (lines {}–{})\n",
+                    f.count,
+                    f.line + 1,
+                    f.last + 1
+                ));
+            }
             out.push_str(&format!("- **why:** {}\n", sig.explain));
             if !excerpt.is_empty() {
                 out.push_str(&format!("- **line:** `{excerpt}`\n"));
@@ -2255,6 +2315,74 @@ mod tests {
         {
             let _ = link;
         }
+    }
+
+    /// A repeated condition must cost one row and a count, not one row per line.
+    #[test]
+    fn scan_collapses_repeated_hits_into_one_counted_finding() {
+        let dir = tmp_name("scan-group");
+        fs::create_dir_all(&dir).unwrap();
+        let mut body = String::new();
+        for _ in 0..50 {
+            body.push_str("2026-07-29 ERROR disabled real-time protection on host\n");
+        }
+        body.push_str("2026-07-29 WARN powershell.exe -enc SQBFAFgA\n");
+        let path = dir.join("noisy.log");
+        fs::write(&path, body).unwrap();
+
+        let mut app = app_with_paths(&[&path.to_string_lossy()]);
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+
+        // The invariant, stated without depending on how many signatures the
+        // built-in library happens to fire on these lines.
+        let mut pairs: Vec<(usize, usize)> = app.findings.iter().map(|f| (f.file, f.sig)).collect();
+        let rows = pairs.len();
+        pairs.sort_unstable();
+        pairs.dedup();
+        assert_eq!(pairs.len(), rows, "one row per (file, signature) at most");
+
+        assert!(
+            rows < 50,
+            "50 identical lines must not produce 50 rows, got {rows}"
+        );
+        let repeated = app
+            .findings
+            .iter()
+            .max_by_key(|f| f.count)
+            .expect("a finding");
+        assert_eq!(repeated.count, 50, "every repeat must be counted");
+        assert_eq!(repeated.line, 0, "line is the first hit — the jump target");
+        assert_eq!(repeated.last, 49, "last is the final hit");
+        assert!(
+            app.occurrence_count() >= 51,
+            "hits must total every matching line, got {}",
+            app.occurrence_count()
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Grouping is per file, so a per-file count is never silently merged across
+    /// the corpus.
+    #[test]
+    fn scan_groups_per_file_not_across_files() {
+        let dir = tmp_name("scan-group-files");
+        fs::create_dir_all(&dir).unwrap();
+        let line = "2026-07-29 ERROR disabled real-time protection\n";
+        fs::write(dir.join("a.log"), line.repeat(3)).unwrap();
+        fs::write(dir.join("b.log"), line.repeat(7)).unwrap();
+
+        let mut app = app_with_paths(&[&dir.to_string_lossy()]);
+        assert_eq!(app.files.len(), 2);
+        run_scan_to_completion(&mut app);
+
+        let mut counts: Vec<usize> = app.findings.iter().map(|f| f.count).collect();
+        counts.sort_unstable();
+        assert_eq!(counts, vec![3, 7], "each file keeps its own count");
+        assert_eq!(app.occurrence_count(), 10);
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

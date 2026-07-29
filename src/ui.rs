@@ -870,14 +870,15 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     app.regions.findings = popup;
 
     let c = app.severity_counts();
+    let hits = app.occurrence_count();
+    let scale = if hits > app.findings.len() {
+        format!("{} ({} hits)", app.findings.len(), hits)
+    } else {
+        format!("{}", app.findings.len())
+    };
     let title = format!(
         " Scan findings — {}   {} crit · {} high · {} med · {} low · {} info ",
-        app.findings.len(),
-        c[4],
-        c[3],
-        c[2],
-        c[1],
-        c[0],
+        scale, c[4], c[3], c[2], c[1], c[0],
     );
     let block = t.panel(&title, true);
     let inner = block.inner(popup);
@@ -938,10 +939,24 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
             format!("  {}:{}", file_name, f.line + 1),
             Style::default().fg(t.text_dim),
         );
+        // A repeat count is the difference between "this happened" and "this
+        // happened 900 times", so it is emphasised rather than dimmed. Absent
+        // for single hits to keep the common row quiet.
+        let repeat = if f.count > 1 {
+            Span::styled(
+                format!("  ×{}", f.count),
+                Style::default()
+                    .fg(sig.severity.color())
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
         let mut line = Line::from(vec![
             badge,
             Span::raw(" "),
             Span::styled(sig.title.to_string(), title_style),
+            repeat,
             loc,
         ]);
         if is_sel {
@@ -974,6 +989,16 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(
                     format!("  {}", sig.title),
                     Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+                ),
+                // Spell out the span a repeated condition covers: two hits 4000
+                // lines apart mean something different from two adjacent ones.
+                Span::styled(
+                    if f.count > 1 {
+                        format!("   {} hits, lines {}–{}", f.count, f.line + 1, f.last + 1)
+                    } else {
+                        String::new()
+                    },
+                    Style::default().fg(t.text_dim),
                 ),
             ]),
             Line::from(Span::styled(
