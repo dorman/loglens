@@ -138,13 +138,19 @@ fn parse_bool(value: &str) -> bool {
     )
 }
 
+/// Serializes every test that overrides `LOGLENS_CONFIG_DIR`.
+///
+/// Environment variables are process-global, but `cargo test` runs tests on
+/// parallel threads within one process, so two tests pointing the config
+/// directory at different temp folders will clobber each other. Any test that
+/// mutates the variable — in this module or any other — must hold this lock
+/// for as long as the override is in place.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serialize env mutations across config tests in this process.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_ignore_case_variants() {

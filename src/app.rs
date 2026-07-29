@@ -3467,9 +3467,12 @@ mod tests {
 
     #[test]
     fn toggle_ignore_case_persists_preference() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tmp_name("ic-pref");
         fs::create_dir_all(&dir).unwrap();
-        // SAFETY: test-only env override; cleaned up before return.
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
         unsafe {
             std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
         }
@@ -3497,9 +3500,12 @@ mod tests {
 
     #[test]
     fn toggle_legend_persists_preference() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tmp_name("legend-pref");
         fs::create_dir_all(&dir).unwrap();
-        // SAFETY: test-only env override; cleaned up before return.
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
         unsafe {
             std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
         }
@@ -3527,11 +3533,14 @@ mod tests {
 
     #[test]
     fn browser_cwd_persists_and_restores() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let cfg_dir = tmp_name("browser-cwd-pref");
         let browse = tmp_name("browser-cwd-target");
         fs::create_dir_all(&cfg_dir).unwrap();
         fs::create_dir_all(&browse).unwrap();
-        // SAFETY: test-only env override; cleaned up before return.
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
         unsafe {
             std::env::set_var("LOGLENS_CONFIG_DIR", &cfg_dir);
         }
