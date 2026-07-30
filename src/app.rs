@@ -48,6 +48,30 @@ pub(crate) const FINDING_FILTERS: [Option<Severity>; 4] = [
     Some(Severity::Medium),
 ];
 
+/// Render a per-severity tally as `3 crit · 5 high · 4 med`, indexed by
+/// `Severity as usize`.
+///
+/// Segments are derived from [`FINDING_FILTERS`] instead of being spelled out, so
+/// a tally can never advertise a severity the findings list is unable to hold:
+/// [`MIN_FINDING_SEVERITY`] keeps anything quieter out, which used to leave a
+/// permanent `0 low · 0 info` in both the findings panel title and the export
+/// header. Widening the filters widens every tally with them.
+pub(crate) fn severity_tally(counts: [usize; 5]) -> String {
+    FINDING_FILTERS
+        .iter()
+        .copied()
+        .flatten()
+        .map(|sev| {
+            format!(
+                "{} {}",
+                counts[sev as usize],
+                sev.label().to_ascii_lowercase()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Every hit of signature `sig` within file `file`, collapsed into one entry.
 ///
 /// A noisy log repeats the same condition on hundreds of lines. One finding per
@@ -1966,14 +1990,9 @@ impl App {
         out.push_str("# loglens scan findings\n\n");
         let hits = self.occurrence_count();
         out.push_str(&format!(
-            "{} findings · {} matching lines · {} crit · {} high · {} med · {} low · {} info\n\n",
+            "{} findings · {hits} matching lines · {}\n\n",
             self.findings.len(),
-            hits,
-            c[4],
-            c[3],
-            c[2],
-            c[1],
-            c[0]
+            severity_tally(c),
         ));
         for (i, f) in self.findings.iter().enumerate() {
             let sig = &self.signatures[f.sig];
@@ -2209,6 +2228,21 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("loglens-{prefix}-{nonce}"))
+    }
+
+    #[test]
+    fn severity_tally_covers_exactly_the_selectable_filters() {
+        // counts are indexed by `Severity as usize`: info, low, medium, high, crit.
+        assert_eq!(severity_tally([7, 9, 4, 5, 3]), "3 crit · 5 high · 4 med");
+        // Zeroes are still listed — a reportable severity with no hits is
+        // information; a severity that cannot be reported at all is not.
+        assert_eq!(severity_tally([0; 5]), "0 crit · 0 high · 0 med");
+        // The tally and the filter tabs must stay derived from one source, so a
+        // future MIN_FINDING_SEVERITY change updates both at once.
+        assert_eq!(
+            severity_tally([1; 5]).split(" · ").count(),
+            FINDING_FILTERS.iter().flatten().count()
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 use regex::Regex;
 
-use crate::app::{App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode};
+use crate::app::{App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, severity_tally};
 use crate::rules::Rule;
 use crate::signatures::Severity;
 use crate::theme::{self, Theme};
@@ -891,21 +891,25 @@ fn findings_filter_tabs(app: &App, counts: [usize; 5]) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Title for the findings popup: the finding count (with the raw hit count when
+/// grouping collapsed repeats) followed by one tally segment per reportable
+/// severity. The tally itself comes from [`severity_tally`] so the header cannot
+/// drift from the severities the filter tabs can select.
+fn findings_title(total: usize, hits: usize, counts: [usize; 5]) -> String {
+    let scale = if hits > total {
+        format!("{total} ({hits} hits)")
+    } else {
+        format!("{total}")
+    };
+    format!(" Scan findings — {scale}   {} ", severity_tally(counts))
+}
+
 fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     let popup = centered_rect(84, 84, area);
     app.regions.findings = popup;
 
     let c = app.severity_counts();
-    let hits = app.occurrence_count();
-    let scale = if hits > app.findings.len() {
-        format!("{} ({} hits)", app.findings.len(), hits)
-    } else {
-        format!("{}", app.findings.len())
-    };
-    let title = format!(
-        " Scan findings — {}   {} crit · {} high · {} med · {} low · {} info ",
-        scale, c[4], c[3], c[2], c[1], c[0],
-    );
+    let title = findings_title(app.findings.len(), app.occurrence_count(), c);
     let block = app.theme.panel(&title, true);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
@@ -1254,6 +1258,26 @@ mod tests {
         );
         assert_eq!(partial[0].start, 0);
         assert_eq!(partial[0].end, 5);
+    }
+
+    /// Regression guard: the header used to spell out all five severities, so it
+    /// permanently read `… · 0 low · 0 info` even though `MIN_FINDING_SEVERITY`
+    /// keeps anything below Medium out of the findings list.
+    #[test]
+    fn findings_title_omits_severities_the_list_cannot_hold() {
+        // counts are indexed by `Severity as usize`: info, low, medium, high, crit.
+        let title = findings_title(12, 12, [7, 9, 4, 5, 3]);
+        assert_eq!(title, " Scan findings — 12   3 crit · 5 high · 4 med ");
+        assert!(!title.contains("low"), "{title}");
+        assert!(!title.contains("info"), "{title}");
+    }
+
+    #[test]
+    fn findings_title_shows_hit_count_only_when_grouping_collapsed_repeats() {
+        // More hits than findings: grouping collapsed repeats, so say both.
+        assert!(findings_title(3, 900, [0, 0, 1, 1, 1]).contains("3 (900 hits)"));
+        // One hit per finding: the parenthetical would be noise.
+        assert!(!findings_title(3, 3, [0, 0, 1, 1, 1]).contains("hits"));
     }
 
     #[test]
