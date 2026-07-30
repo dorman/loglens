@@ -17,6 +17,9 @@ pub struct Config {
     pub ignore_case: bool,
     /// When true, the highlight legend panel is visible.
     pub show_legend: bool,
+    /// When true, opening a file scans it without waiting for `S`.
+    /// `--no-scan` suppresses the launch scan for one run regardless.
+    pub scan_on_open: bool,
     /// Last directory opened in the in-TUI file browser (`o`).
     /// Restored on the next launch when the path still exists.
     pub browser_cwd: Option<PathBuf>,
@@ -28,6 +31,9 @@ impl Default for Config {
             ignore_case: false,
             // Match the App bootstrap default so a missing key keeps the legend.
             show_legend: true,
+            // Triage is the reason the tool exists, so the default is on: a
+            // config file written before this key existed still scans on open.
+            scan_on_open: true,
             browser_cwd: None,
         }
     }
@@ -84,11 +90,13 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     fs::create_dir_all(&dir)?;
     let path = dir.join("config");
     let mut body = format!(
-        "# loglens preferences — updated when you press `i` / `l` / browse with `o`\n\
+        "# loglens preferences — edit in the TUI with `,`, or with `i` / `l` / `o`\n\
          ignore_case={}\n\
-         show_legend={}\n",
+         show_legend={}\n\
+         scan_on_open={}\n",
         if cfg.ignore_case { "true" } else { "false" },
-        if cfg.show_legend { "true" } else { "false" }
+        if cfg.show_legend { "true" } else { "false" },
+        if cfg.scan_on_open { "true" } else { "false" }
     );
     if let Some(cwd) = &cfg.browser_cwd {
         // Path may contain '=' — only the first '=' is the separator on load.
@@ -118,6 +126,7 @@ fn parse(text: &str) -> Config {
         match key {
             "ignore_case" => cfg.ignore_case = parse_bool(value),
             "show_legend" => cfg.show_legend = parse_bool(value),
+            "scan_on_open" => cfg.scan_on_open = parse_bool(value),
             "browser_cwd" => {
                 cfg.browser_cwd = if value.is_empty() {
                     None
@@ -173,6 +182,17 @@ mod tests {
         assert!(parse("show_legend=yes\n").show_legend);
     }
 
+    /// A config written before this key existed must keep scanning on open —
+    /// the absent key means "never chose", not "chose off".
+    #[test]
+    fn parse_scan_on_open_defaults_true_when_absent() {
+        assert!(parse("").scan_on_open);
+        assert!(parse("ignore_case=true\nshow_legend=false\n").scan_on_open);
+        assert!(!parse("scan_on_open=false\n").scan_on_open);
+        assert!(!parse("scan_on_open=0\n").scan_on_open);
+        assert!(parse("scan_on_open=on\n").scan_on_open);
+    }
+
     #[test]
     fn parse_browser_cwd() {
         assert_eq!(parse("").browser_cwd, None);
@@ -210,6 +230,7 @@ mod tests {
         save(&Config {
             ignore_case: false,
             show_legend: false,
+            scan_on_open: true,
             browser_cwd: Some(PathBuf::from("/tmp/evil\nignore_case=true")),
         })
         .unwrap();
@@ -248,6 +269,7 @@ mod tests {
         let on = Config {
             ignore_case: true,
             show_legend: false,
+            scan_on_open: false,
             browser_cwd: Some(PathBuf::from("/var/log")),
         };
         save(&on).unwrap();
@@ -256,6 +278,7 @@ mod tests {
         let off = Config {
             ignore_case: false,
             show_legend: true,
+            scan_on_open: true,
             browser_cwd: None,
         };
         save(&off).unwrap();
@@ -264,6 +287,7 @@ mod tests {
         let text = fs::read_to_string(dir.join("config")).unwrap();
         assert!(text.contains("ignore_case=false"));
         assert!(text.contains("show_legend=true"));
+        assert!(text.contains("scan_on_open=true"));
         assert!(!text.contains("browser_cwd="));
         assert!(text.contains('#'));
 

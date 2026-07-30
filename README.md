@@ -35,6 +35,8 @@ logs) and need to spot trouble fast.
   before you add highlights
 - **Full mouse support** — wheel scroll, click-drag scrollbar, click a
   highlight to jump through its matches
+- **Settings (`,`)** — case-insensitive matching, the legend, and scan-on-open
+  in one panel; every change is saved for next time
 
 ## Quick start
 
@@ -88,6 +90,7 @@ First moves once you're in:
 | `←`/`→` | pan left / right across long lines (`0` resets) |
 | `y`   | copy the cursor line to the clipboard |
 | `Y`   | copy the current file path to the clipboard |
+| `,`   | settings (case-insensitive, legend, scan-on-open — persisted) |
 | `?`   | full keybinding help |
 | `q`   | quit |
 

@@ -9,7 +9,9 @@ use ratatui::widgets::{
 };
 use regex::Regex;
 
-use crate::app::{App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, severity_tally};
+use crate::app::{
+    App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, SETTINGS, Setting, severity_tally,
+};
 use crate::rules::Rule;
 use crate::signatures::Severity;
 use crate::theme::{self, Theme};
@@ -25,6 +27,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.show_findings {
         draw_findings(frame, app, area);
+    }
+    if app.show_settings {
+        draw_settings(frame, app, area);
     }
     if app.show_help {
         draw_help(frame, app, area);
@@ -214,6 +219,163 @@ fn draw_rescan_progress(frame: &mut Frame, app: &App, area: Rect) {
             file_name,
         },
     );
+}
+
+/// Inlaid title of the settings panel.
+const TITLE: &str = " Settings ";
+/// Leading indent on a settings row, before the `▸` marker.
+const SETTING_INDENT: usize = 2;
+/// `[ on]` / `[off]` — a fixed field, so the values form a column.
+const SETTING_VALUE_COL: usize = 5;
+/// Cells between the key hint and the value.
+const SETTING_GAP: usize = 3;
+
+/// Cells a settings row needs before its value column would crowd its label.
+///
+/// The list width is the max of this over every row, and `setting_row` lays out
+/// against that same number — deriving both from one place is what keeps the
+/// longest label from colliding with the key column.
+fn setting_row_width(setting: Setting) -> usize {
+    let key = setting.key_hint().unwrap_or(" ").chars().count();
+    SETTING_INDENT
+        + 2
+        + setting.label().chars().count()
+        + SETTING_GAP
+        + key
+        + SETTING_GAP
+        + SETTING_VALUE_COL
+        + 1
+}
+
+/// One settings row: `▸ Label            i   [ on]`.
+///
+/// `column_width` is the width of the *list*, not of the panel: the value column
+/// is pinned to the widest row rather than to the panel's right edge, so a long
+/// explanation underneath can widen the panel without stranding the values out
+/// on the far side of it.
+fn setting_row(
+    t: &Theme,
+    setting: Setting,
+    on: bool,
+    selected: bool,
+    column_width: u16,
+) -> Line<'static> {
+    let marker = if selected { "\u{25B8} " } else { "  " };
+    let left = format!(
+        "{:indent$}{marker}{}",
+        "",
+        setting.label(),
+        indent = SETTING_INDENT
+    );
+
+    // The key that also does this, so the panel teaches its own shortcut.
+    let key = setting.key_hint().unwrap_or(" ");
+    let value = if on { "[ on]" } else { "[off]" };
+    let right_width = key.chars().count() + SETTING_GAP + SETTING_VALUE_COL + 1;
+    let filler = (column_width as usize).saturating_sub(left.chars().count() + right_width);
+
+    Line::from(vec![
+        Span::styled(left, Style::default().fg(t.text)),
+        Span::raw(" ".repeat(filler)),
+        Span::styled(key.to_string(), Style::default().fg(t.accent)),
+        Span::raw(" ".repeat(SETTING_GAP)),
+        Span::styled(
+            value.to_string(),
+            // On is the product doing something, so it carries the accent; off
+            // recedes with a dimmer color rather than an attribute.
+            if on {
+                Style::default().fg(t.accent)
+            } else {
+                dim(t)
+            },
+        ),
+    ])
+}
+
+fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
+    let sel = app.settings_sel.min(SETTINGS.len() - 1);
+    let detail = SETTINGS[sel].detail();
+    let footer = Line::from(vec![
+        Span::styled("  j/k", Style::default().fg(t.accent)),
+        Span::styled(" move   ", dim(t)),
+        Span::styled("Enter", Style::default().fg(t.accent)),
+        Span::styled(" toggle   ", dim(t)),
+        Span::styled("Esc", Style::default().fg(t.accent)),
+        Span::styled(" close", dim(t)),
+    ]);
+
+    // Sized to its own rows, like the progress overlay and the help sheet: a
+    // setting whose explanation wraps mid-word is worse than a wider panel.
+    let widest_row = SETTINGS
+        .iter()
+        .map(|s| setting_row_width(*s))
+        .max()
+        .unwrap_or(0);
+    // +1 so the longest explanation never sits flush against the border.
+    let widest_detail = SETTINGS
+        .iter()
+        .map(|s| SETTING_INDENT + s.detail().chars().count() + 1)
+        .max()
+        .unwrap_or(0);
+    let content = widest_row
+        .max(widest_detail)
+        .max(footer.width())
+        .max(TITLE.chars().count() + 2) as u16;
+
+    let rows_tall = SETTINGS.len() as u16;
+    // pad · rows · pad · detail · pad · footer
+    let rect = centered_rect_cells(area, content.saturating_add(2), rows_tall + 7);
+    let block = t.panel(TITLE, true);
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(rows_tall),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    app.regions.settings_list = parts[1];
+
+    for (i, setting) in SETTINGS.iter().enumerate() {
+        let row = Rect {
+            y: parts[1].y + i as u16,
+            height: 1,
+            ..parts[1]
+        };
+        let selected = i == sel;
+        let line = setting_row(
+            t,
+            *setting,
+            app.setting_value(*setting),
+            selected,
+            widest_row as u16,
+        );
+        let mut para = Paragraph::new(line);
+        if selected {
+            // Row wash marks the cursor row here exactly as it does in the log
+            // and the findings list; REVERSED stays reserved for the filter tabs.
+            para = para.style(Style::default().bg(t.cursor_bg));
+        }
+        frame.render_widget(para, row);
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("{:indent$}{detail}", "", indent = SETTING_INDENT),
+            dim(t),
+        ))),
+        parts[3],
+    );
+    frame.render_widget(Paragraph::new(footer), parts[5]);
 }
 
 /// Split `width` cells across the severity mix in `counts`, Critical → Info,
@@ -1297,7 +1459,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
             ("p / P", "next / previous finding (wraps; no panel)"),
             ("e", "export findings (never overwrites an export)"),
             ("(in panel)", "j/k move · f/F or ←/→ severity filter"),
-            ("", "Enter jump · e export · q close"),
+            ("", "Enter jump · e export · , settings · ? help · q close"),
         ],
     },
     HelpSection {
@@ -1316,6 +1478,13 @@ const HELP_SECTIONS: &[HelpSection] = &[
             ("click legend", "jump through that highlight's matches"),
             ("x", "remove the last highlight"),
             ("i / l", "toggle case-insensitive / legend (both persisted)"),
+        ],
+    },
+    HelpSection {
+        title: "Settings",
+        rows: &[
+            (",", "open settings (all prefs, persisted)"),
+            ("(in panel)", "j/k move · Enter toggle · Esc close"),
         ],
     },
     HelpSection {
@@ -1691,6 +1860,68 @@ mod tests {
         let bar = severity_bar(counts, 10);
         assert!(bar.width() <= 10);
         assert!(!bar.spans.is_empty());
+    }
+
+    /// The longest label used to run straight into the key column, because the
+    /// width formula and the row builder computed the layout independently.
+    #[test]
+    fn settings_value_column_clears_the_longest_label() {
+        let t = Theme::dark();
+        let width = SETTINGS
+            .iter()
+            .map(|s| setting_row_width(*s))
+            .max()
+            .unwrap_or(0) as u16;
+
+        for setting in SETTINGS {
+            let line = setting_row(&t, setting, true, false, width);
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.contains(setting.label()),
+                "row lost its label: {text:?}"
+            );
+            // Whatever the label's length, the value stays a distinct column.
+            let label_end = text.find(setting.label()).unwrap() + setting.label().len();
+            let tail = &text[label_end..];
+            assert!(
+                tail.starts_with("   "),
+                "label runs into the next column: {text:?}"
+            );
+            assert!(text.ends_with("[ on]"), "{text:?}");
+            assert!(line.width() <= width as usize, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn settings_row_shows_state_and_marks_only_the_selection() {
+        let t = Theme::dark();
+        let width = 44;
+
+        let on = setting_row(&t, Setting::ScanOnOpen, true, false, width);
+        let off = setting_row(&t, Setting::ScanOnOpen, false, false, width);
+        let on_text: String = on.spans.iter().map(|s| s.content.as_ref()).collect();
+        let off_text: String = off.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(on_text.contains("[ on]"), "{on_text:?}");
+        assert!(off_text.contains("[off]"), "{off_text:?}");
+
+        // The selected row is the only one wearing the marker.
+        let selected = setting_row(&t, Setting::IgnoreCase, false, true, width);
+        let plain = setting_row(&t, Setting::IgnoreCase, false, false, width);
+        let sel_text: String = selected.spans.iter().map(|s| s.content.as_ref()).collect();
+        let plain_text: String = plain.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(sel_text.contains('\u{25B8}'), "{sel_text:?}");
+        assert!(!plain_text.contains('\u{25B8}'), "{plain_text:?}");
+        // Marker and blank both take two cells, so the labels stay in column.
+        assert_eq!(selected.width(), plain.width());
+
+        // A setting with a keybinding advertises it; one without shows nothing.
+        assert!(sel_text.contains(" i   "), "{sel_text:?}");
+        let no_key: String = setting_row(&t, Setting::ScanOnOpen, false, false, width)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!no_key.contains('i'), "{no_key:?}");
     }
 
     /// The work bar reads its length as progress, so a rounding shortfall would

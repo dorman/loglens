@@ -48,6 +48,57 @@ pub(crate) const FINDING_FILTERS: [Option<Severity>; 4] = [
     Some(Severity::Medium),
 ];
 
+/// One row of the settings panel (`,`).
+///
+/// Deliberately a closed enum rather than a list of closures over `&mut App`:
+/// every setting here is also reachable another way, and the enum makes the
+/// panel dispatch to those same toggles instead of reimplementing them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Setting {
+    IgnoreCase,
+    ShowLegend,
+    ScanOnOpen,
+}
+
+/// Settings in the order they are drawn and moved through.
+pub const SETTINGS: [Setting; 3] = [
+    Setting::IgnoreCase,
+    Setting::ShowLegend,
+    Setting::ScanOnOpen,
+];
+
+impl Setting {
+    pub fn label(self) -> &'static str {
+        match self {
+            Setting::IgnoreCase => "Ignore case in highlights",
+            Setting::ShowLegend => "Show highlight legend",
+            Setting::ScanOnOpen => "Scan on open",
+        }
+    }
+
+    /// One line on what the setting actually does, shown beneath the list for
+    /// the selected row — a label alone cannot say what `--no-scan` overrides.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Setting::IgnoreCase => "Keyword and regex highlights match regardless of case.",
+            Setting::ShowLegend => "Keep the highlight legend panel beside the log.",
+            Setting::ScanOnOpen => "Opening a file scans it without waiting for S.",
+        }
+    }
+
+    /// The viewer key that also toggles this, when one exists. The panel shows
+    /// it so a user who opens settings once learns the shortcut and stops
+    /// needing the panel.
+    pub fn key_hint(self) -> Option<&'static str> {
+        match self {
+            Setting::IgnoreCase => Some("i"),
+            Setting::ShowLegend => Some("l"),
+            // Only `,` and `--no-scan` reach this one; no viewer key to teach.
+            Setting::ScanOnOpen => None,
+        }
+    }
+}
+
 /// Render a per-severity tally as `3 crit · 5 high · 4 med`, indexed by
 /// `Severity as usize`.
 ///
@@ -162,6 +213,9 @@ pub struct Regions {
     pub findings_list: Rect,
     /// First visible finding index (for click mapping).
     pub findings_top: usize,
+    /// Exact rect of the settings rows (excludes the detail and footer lines),
+    /// so mouse clicks map 1:1 onto settings.
+    pub settings_list: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -433,6 +487,10 @@ pub struct App {
     pub mode: Mode,
     pub browser: Browser,
     pub ignore_case: bool,
+    /// Persisted preference: open a file and it scans itself. Distinct from
+    /// `auto_scan`, which is the armed/disarmed state for *this* run — `--no-scan`
+    /// suppresses the launch scan without rewriting what the user chose.
+    pub scan_on_open: bool,
 
     pub filter_on: bool,
     pub search: Option<Search>,
@@ -462,6 +520,9 @@ pub struct App {
 
     pub show_legend: bool,
     pub show_help: bool,
+    /// The settings overlay (`,`) and the row the cursor sits on.
+    pub show_settings: bool,
+    pub settings_sel: usize,
     /// First visible row of the help sheet, plus the row counts the last frame
     /// measured. Held here rather than derived at render time so the view holds
     /// still while the sheet reflows.
@@ -500,6 +561,7 @@ impl App {
             mode: Mode::Viewer,
             browser: Browser::new(start_dir),
             ignore_case,
+            scan_on_open: true,
             filter_on: false,
             search: None,
             active_rule: None,
@@ -516,6 +578,8 @@ impl App {
             auto_scan: false,
             show_legend: true,
             show_help: false,
+            show_settings: false,
+            settings_sel: 0,
             help_scroll: 0,
             help_rows: 0,
             help_height: 0,
@@ -2182,11 +2246,19 @@ impl App {
 
     /// Persist the browser's current working directory for the next launch.
     pub fn remember_browser_cwd(&self) {
-        let _ = crate::config::save(&crate::config::Config {
+        let _ = crate::config::save(&self.current_config());
+    }
+
+    /// Everything the app persists, gathered in one place. Both writers go
+    /// through this so adding a preference cannot silently reset another one by
+    /// being forgotten at a second construction site.
+    fn current_config(&self) -> crate::config::Config {
+        crate::config::Config {
             ignore_case: self.ignore_case,
             show_legend: self.show_legend,
+            scan_on_open: self.scan_on_open,
             browser_cwd: Some(self.browser.cwd.clone()),
-        });
+        }
     }
 
     pub fn toggle_legend(&mut self) {
@@ -2198,13 +2270,58 @@ impl App {
 
     /// Write current prefs to disk. Returns a short status suffix.
     fn persist_prefs(&self) -> String {
-        match crate::config::save(&crate::config::Config {
-            ignore_case: self.ignore_case,
-            show_legend: self.show_legend,
-            browser_cwd: Some(self.browser.cwd.clone()),
-        }) {
+        match crate::config::save(&self.current_config()) {
             Ok(()) => " · saved".to_string(),
             Err(_) => " · could not save pref".to_string(),
+        }
+    }
+
+    /// Turn scan-on-open on or off, for this run and for the next one.
+    ///
+    /// The preference drives `auto_scan` from here on, so turning it on arms
+    /// later opens and turning it off disarms them. It deliberately does not
+    /// scan what is already loaded: "scan whatever I open" is not a request to
+    /// scan right now — `S` is.
+    pub fn toggle_scan_on_open(&mut self) {
+        self.scan_on_open = !self.scan_on_open;
+        self.auto_scan = self.scan_on_open;
+        let state = if self.scan_on_open { "on" } else { "off" };
+        let persist = self.persist_prefs();
+        self.status = Some(format!("scan on open: {state}{persist}"));
+    }
+
+    pub fn toggle_settings(&mut self) {
+        self.show_settings = !self.show_settings;
+        // Reopening starts at the top, like the help sheet: this is a short list
+        // to look over, not a place the user left off.
+        if self.show_settings {
+            self.settings_sel = 0;
+        }
+    }
+
+    /// Move the settings cursor, clamped like the findings list.
+    pub fn settings_move(&mut self, delta: isize) {
+        let last = SETTINGS.len() as isize - 1;
+        self.settings_sel = (self.settings_sel as isize + delta).clamp(0, last) as usize;
+    }
+
+    /// Current value of a setting, for rendering its state.
+    pub fn setting_value(&self, setting: Setting) -> bool {
+        match setting {
+            Setting::IgnoreCase => self.ignore_case,
+            Setting::ShowLegend => self.show_legend,
+            Setting::ScanOnOpen => self.scan_on_open,
+        }
+    }
+
+    /// Flip the selected setting. Each arm reuses the same toggle the keybinding
+    /// calls, so the panel is a second door onto one behaviour rather than a
+    /// parallel implementation that can drift.
+    pub fn settings_activate(&mut self) {
+        match SETTINGS[self.settings_sel.min(SETTINGS.len() - 1)] {
+            Setting::IgnoreCase => self.toggle_ignore_case(),
+            Setting::ShowLegend => self.toggle_legend(),
+            Setting::ScanOnOpen => self.toggle_scan_on_open(),
         }
     }
 
@@ -4104,6 +4221,123 @@ mod tests {
         app.toggle_ignore_case();
         assert!(!app.ignore_case);
         assert!(!crate::config::load().ignore_case);
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_move_clamps_at_both_ends() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.settings_move(-1);
+        assert_eq!(app.settings_sel, 0, "k at the top stays put");
+        app.settings_move(1);
+        app.settings_move(1);
+        app.settings_move(1);
+        assert_eq!(
+            app.settings_sel,
+            SETTINGS.len() - 1,
+            "j past the end stays on the last row"
+        );
+    }
+
+    #[test]
+    fn toggle_settings_reopens_at_the_top() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.toggle_settings();
+        assert!(app.show_settings);
+        app.settings_move(2);
+        app.toggle_settings();
+        assert!(!app.show_settings);
+        app.toggle_settings();
+        assert_eq!(app.settings_sel, 0);
+    }
+
+    /// The panel must dispatch to the same toggles the keybindings call, not to
+    /// a parallel copy that can drift out of step with them.
+    #[test]
+    fn settings_activate_flips_the_selected_row() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tmp_name("settings-activate");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+
+        for (row, setting) in SETTINGS.iter().enumerate() {
+            app.settings_sel = row;
+            let before = app.setting_value(*setting);
+            app.settings_activate();
+            assert_ne!(
+                app.setting_value(*setting),
+                before,
+                "row {row} ({setting:?}) did not flip"
+            );
+        }
+
+        // Every flip went to disk, not just the last one.
+        let loaded = crate::config::load();
+        assert!(loaded.ignore_case);
+        assert!(!loaded.show_legend);
+        assert!(!loaded.scan_on_open);
+
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Turning the preference on arms *later* opens. It deliberately does not
+    /// scan what is already loaded — "scan whatever I open" is not "scan now".
+    #[test]
+    fn toggling_scan_on_open_arms_later_opens_without_scanning_now() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tmp_name("scan-on-open-pref");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+
+        // Start from the `--no-scan` shape: files open, nothing armed.
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.scan_on_open = false;
+        assert!(!app.scanning());
+
+        app.toggle_scan_on_open();
+        assert!(app.scan_on_open);
+        assert!(
+            !app.scanning(),
+            "arming the preference must not start a scan on already-open files"
+        );
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("scan on open: on"),
+            "{:?}",
+            app.status
+        );
+
+        // Armed: the next open scans.
+        app.open_resolved(&[PathBuf::from("samples/network.log")]);
+        assert!(app.scanning() || !app.findings.is_empty());
+
+        // Disarmed again: a later open does not.
+        app.cancel_scan();
+        app.toggle_scan_on_open();
+        assert!(!app.scan_on_open);
+        app.findings.clear();
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(!app.scanning());
+
         unsafe {
             std::env::remove_var("LOGLENS_CONFIG_DIR");
         }
