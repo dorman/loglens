@@ -459,6 +459,12 @@ pub struct App {
 
     pub show_legend: bool,
     pub show_help: bool,
+    /// First visible row of the help sheet, plus the row counts the last frame
+    /// measured. Held here rather than derived at render time so the view holds
+    /// still while the sheet reflows.
+    pub help_scroll: usize,
+    help_rows: usize,
+    help_height: usize,
     pub viewport_height: usize,
     pub regions: Regions,
     /// True while the user is dragging the scrollbar thumb.
@@ -506,6 +512,9 @@ impl App {
             input_buffer: String::new(),
             show_legend: true,
             show_help: false,
+            help_scroll: 0,
+            help_rows: 0,
+            help_height: 0,
             viewport_height: 20,
             regions: Regions::default(),
             scrollbar_drag: false,
@@ -2152,6 +2161,40 @@ impl App {
 
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+        // Reopening starts at the top: the sheet is a reference, not a place the
+        // user left off.
+        self.help_scroll = 0;
+    }
+
+    /// Keep the help scroll inside the current sheet. Both arguments are
+    /// render-time facts (the sheet reflows between one and two columns), so the
+    /// clamp runs on every frame as well as on every keypress.
+    pub fn help_clamp_scroll(&mut self, rows: usize, height: usize) {
+        self.help_rows = rows;
+        self.help_height = height;
+        self.help_scroll = self.help_scroll.min(self.help_max_scroll());
+    }
+
+    fn help_max_scroll(&self) -> usize {
+        self.help_rows.saturating_sub(self.help_height)
+    }
+
+    /// Scroll the help sheet by `delta` rows, clamped at both ends. Help is a
+    /// reference sheet, so it does not wrap the way findings and matches do.
+    pub fn help_scroll_by(&mut self, delta: isize) {
+        let max = self.help_max_scroll();
+        let next = self.help_scroll as isize + delta;
+        self.help_scroll = next.clamp(0, max as isize) as usize;
+    }
+
+    /// One screenful, keeping a row of overlap so the reader keeps their place.
+    pub fn help_scroll_page(&mut self, dir: isize) {
+        let page = self.help_height.saturating_sub(1).max(1) as isize;
+        self.help_scroll_by(dir * page);
+    }
+
+    pub fn help_scroll_to_end(&mut self) {
+        self.help_scroll = self.help_max_scroll();
     }
 
     /// Absolute 1-based line number and text under the cursor, if any.
@@ -2228,6 +2271,42 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("loglens-{prefix}-{nonce}"))
+    }
+
+    #[test]
+    fn help_scroll_stays_inside_the_sheet() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.help_clamp_scroll(44, 20); // 44 rows of content in a 20-row body
+
+        app.help_scroll_by(1000);
+        assert_eq!(app.help_scroll, 24, "cannot scroll past the last row");
+        app.help_scroll_by(-1000);
+        assert_eq!(app.help_scroll, 0, "cannot scroll above the first row");
+
+        app.help_scroll_page(1);
+        assert_eq!(app.help_scroll, 19, "a page keeps one row of overlap");
+        app.help_scroll_to_end();
+        assert_eq!(app.help_scroll, 24);
+
+        // Reflowing to two columns shortens the sheet; the view must come back
+        // into range instead of being stranded past the end.
+        app.help_clamp_scroll(25, 25);
+        assert_eq!(app.help_scroll, 0);
+    }
+
+    #[test]
+    fn reopening_help_returns_to_the_top() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.toggle_help();
+        app.help_clamp_scroll(44, 20);
+        app.help_scroll_to_end();
+        assert_ne!(app.help_scroll, 0);
+        app.toggle_help(); // close
+        app.toggle_help(); // reopen
+        assert_eq!(
+            app.help_scroll, 0,
+            "help is a reference, not a resumed view"
+        );
     }
 
     #[test]

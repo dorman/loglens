@@ -266,10 +266,25 @@ fn handle_browser(app: &mut App, code: KeyCode) {
 
 fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if app.show_help {
-        // Footer advertises q; treat it like ?/Esc so it closes the overlay
-        // instead of being swallowed with no effect.
-        if matches!(code, KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc) {
-            app.toggle_help();
+        match code {
+            // Footer advertises q; treat it like ?/Esc so it closes the overlay
+            // instead of being swallowed with no effect.
+            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => app.toggle_help(),
+            // The sheet is taller than most terminals, so it scrolls with the
+            // same keys the viewer uses.
+            KeyCode::Char('j') | KeyCode::Down => app.help_scroll_by(1),
+            KeyCode::Char('k') | KeyCode::Up => app.help_scroll_by(-1),
+            KeyCode::Char(' ') | KeyCode::PageDown => app.help_scroll_page(1),
+            KeyCode::PageUp => app.help_scroll_page(-1),
+            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+                app.help_scroll_page(1)
+            }
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                app.help_scroll_page(-1)
+            }
+            KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => app.help_scroll_to_end(),
+            _ => {}
         }
         return;
     }

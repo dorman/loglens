@@ -1106,6 +1106,19 @@ fn centered_rect_lines(area: Rect, percent_x: u16, lines: u16) -> Rect {
     }
 }
 
+/// Centre a rect of an explicit cell size, clamped to `area`. Used where the
+/// content's own width decides the panel instead of a share of the terminal.
+fn centered_rect_cells(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1126,85 +1139,261 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let popup = centered_rect(66, 92, area);
-    let head = |s: &'static str| {
-        Line::from(Span::styled(
-            s,
+/// One keybinding: the key(s), then what they do. An empty key is a
+/// continuation of the row above it.
+type HelpRow = (&'static str, &'static str);
+
+struct HelpSection {
+    title: &'static str,
+    rows: &'static [HelpRow],
+}
+
+/// Cells reserved for the key column. The longest labels (`Shift-Tab / [`,
+/// `Ctrl-d/Ctrl-u`) are 13 cells, so 16 keeps the description column clear.
+const HELP_KEY_COL: usize = 16;
+/// Leading indent on every keybinding row.
+const HELP_INDENT: usize = 2;
+/// Cells between the two columns in the wide layout.
+const HELP_COL_GAP: u16 = 3;
+/// Sections in the left column when the sheet is wide enough for two. `Viewer`
+/// alone balances against everything else (21 rows against 22).
+const HELP_SPLIT: usize = 1;
+
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        title: "Viewer",
+        rows: &[
+            ("j/k, ↑/↓", "scroll one line   (or mouse wheel)"),
+            ("← / →", "pan left / right (long lines)"),
+            ("0", "reset horizontal scroll to column 1"),
+            ("Ctrl-d/Ctrl-u", "scroll one page"),
+            ("Space / PgDn", "page down"),
+            ("PgUp", "page up"),
+            ("g / G", "jump to top / bottom"),
+            ("Home / End", "jump to top / bottom"),
+            (":", "go to line number"),
+            ("m", "toggle bookmark on current line"),
+            ("M", "clear all bookmarks on this file"),
+            ("' / \"", "next / previous bookmark (wraps)"),
+            ("Enter", "jump to first match"),
+            ("n / N", "next / previous match (wraps)"),
+            ("Tab / ]", "next open file"),
+            ("Shift-Tab / [", "previous open file"),
+            ("click a tab", "switch open file"),
+            ("click a line", "move the cursor there"),
+            ("o / w", "open browser / close current file"),
+            ("y", "copy the cursor line to the clipboard"),
+            ("Y", "copy the current file path to the clipboard"),
+        ],
+    },
+    HelpSection {
+        title: "Scan & triage",
+        rows: &[
+            ("S", "scan for known-bad signatures, ranked"),
+            ("s", "reopen last findings panel (no rescan)"),
+            ("p / P", "next / previous finding (wraps; no panel)"),
+            ("e", "export findings (never overwrites an export)"),
+            ("(in panel)", "j/k move · f/F or ←/→ severity filter"),
+            ("", "Enter jump · e export · q close"),
+        ],
+    },
+    HelpSection {
+        title: "Search & filter",
+        rows: &[
+            ("/", "search (Enter first · n/N walk)"),
+            ("f", "filter: matching lines only (status if cursor hidden)"),
+            ("c", "clear search and filter together"),
+            ("Esc", "clear search → clear filter → quit"),
+        ],
+    },
+    HelpSection {
+        title: "Highlights",
+        rows: &[
+            ("a / r", "add keyword / regex highlight"),
+            ("click legend", "jump through that highlight's matches"),
+            ("x", "remove the last highlight"),
+            ("i / l", "toggle case-insensitive / legend (both persisted)"),
+        ],
+    },
+    HelpSection {
+        title: "File browser",
+        rows: &[
+            ("Enter / l", "enter directory / open file"),
+            ("Space  o", "mark a file / open marked"),
+            ("O", "open whole folder or .zip recursively"),
+            ("h / .", "parent dir / toggle hidden"),
+        ],
+    },
+];
+
+/// Render one keybinding row: the key in body text, its description recessed.
+///
+/// The key column is padded by *character* count, not byte length — several
+/// labels carry multi-byte arrows (`↑ ↓ ← →`), so byte padding would push their
+/// descriptions out of column.
+fn help_row(keys: &str, desc: &str, t: &Theme) -> Line<'static> {
+    let pad = HELP_KEY_COL.saturating_sub(keys.chars().count());
+    Line::from(vec![
+        Span::styled(
+            format!("{:indent$}{keys}", "", indent = HELP_INDENT),
+            Style::default().fg(t.text),
+        ),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(desc.to_string(), Style::default().fg(t.text_dim)),
+    ])
+}
+
+/// Widest rendered row across `sections`, in cells.
+fn help_section_width(sections: &[HelpSection]) -> usize {
+    sections
+        .iter()
+        .flat_map(|s| {
+            std::iter::once(s.title.chars().count()).chain(s.rows.iter().map(|(k, d)| {
+                HELP_INDENT + HELP_KEY_COL.max(k.chars().count()) + d.chars().count()
+            }))
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Lay out `sections` as titled blocks separated by a blank row.
+fn help_lines(sections: &[HelpSection], t: &Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (i, section) in sections.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            section.title,
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-        ))
+        )));
+        for (keys, desc) in section.rows {
+            lines.push(help_row(keys, desc, t));
+        }
+    }
+    lines
+}
+
+fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
+
+    // The sheet is sized to its own content rather than to a share of the
+    // terminal: a keybinding reference that truncates its descriptions is worse
+    // than one that scrolls. Two columns halve the row count but need both
+    // columns' width, so they engage only where that fits.
+    let (left, right) = HELP_SECTIONS.split_at(HELP_SPLIT);
+    let left_w = help_section_width(left);
+    let right_w = help_section_width(right);
+    const BORDERS: u16 = 2;
+    let two_col_w = (left_w + HELP_COL_GAP as usize + right_w) as u16 + BORDERS;
+    let two_col = area.width >= two_col_w;
+
+    let (body, want_w) = if two_col {
+        (help_lines(left, t), two_col_w)
+    } else {
+        (
+            help_lines(HELP_SECTIONS, t),
+            help_section_width(HELP_SECTIONS) as u16 + BORDERS,
+        )
     };
-    let text = vec![
-        Line::from(Span::styled(
-            "loglens — keybindings",
-            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        head("Viewer"),
-        Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
-        Line::from("  ← / →           pan left / right (long lines)"),
-        Line::from("  0               reset horizontal scroll to column 1"),
-        Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
-        Line::from("  Space / PgDn    page down"),
-        Line::from("  PgUp            page up"),
-        Line::from("  g / G           jump to top / bottom"),
-        Line::from("  Home / End      jump to top / bottom"),
-        Line::from("  :               go to line number"),
-        Line::from("  m               toggle bookmark on current line"),
-        Line::from("  M               clear all bookmarks on this file"),
-        Line::from("  ' / \"           next / previous bookmark (wraps)"),
-        Line::from("  Enter           jump to first match"),
-        Line::from("  n / N           next / previous match (wraps)"),
-        Line::from("  Tab / ]         next open file"),
-        Line::from("  Shift-Tab / [   previous open file"),
-        Line::from("  click a tab     switch open file"),
-        Line::from("  click a line    move the cursor there"),
-        Line::from("  o / w           open browser / close current file"),
-        Line::from("  y               copy the cursor line to the clipboard"),
-        Line::from("  Y               copy the current file path to the clipboard"),
-        Line::from(""),
-        head("Scan & triage"),
-        Line::from("  S               scan for known-bad signatures, ranked"),
-        Line::from("  s               reopen last findings panel (no rescan)"),
-        Line::from("  p / P           next / previous finding (wraps; no panel)"),
-        Line::from("  e               export findings (never overwrites an export)"),
-        Line::from("  (in panel)      j/k move · f/F or ←/→ severity filter"),
-        Line::from("                  Enter jump · e export · q close"),
-        Line::from(""),
-        head("Search & filter"),
-        Line::from("  /               search (Enter first · n/N walk)"),
-        Line::from("  f               filter: matching lines only (status if cursor hidden)"),
-        Line::from("  c               clear search and filter together"),
-        Line::from("  Esc             clear search → clear filter → quit"),
-        Line::from(""),
-        head("Highlights"),
-        Line::from("  a / r           add keyword / regex highlight"),
-        Line::from("  click legend    jump through that highlight's matches"),
-        Line::from("  x               remove the last highlight"),
-        Line::from("  i / l           toggle case-insensitive / legend (both persisted)"),
-        Line::from(""),
-        head("File browser"),
-        Line::from("  Enter / l       enter directory / open file"),
-        Line::from("  Space  o        mark a file / open marked"),
-        Line::from("  O               open whole folder or .zip recursively"),
-        Line::from("  h / .           parent dir / toggle hidden"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  ?/q/Esc close help",
-            Style::default().fg(t.text_dim),
-        )),
-    ];
+    let right_body = if two_col {
+        help_lines(right, t)
+    } else {
+        Vec::new()
+    };
+    let rows = body.len().max(right_body.len());
+
+    // Header (title + rule) and footer are pinned; only the columns scroll.
+    const CHROME: u16 = BORDERS + 2 /* header */ + 1 /* footer */;
+    let want_h = rows as u16 + CHROME;
+    let popup = centered_rect_cells(
+        area,
+        want_w.min(area.width),
+        want_h.min(area.height * 92 / 100),
+    );
+
     let block = t
         .panel(" Help (?/q/Esc to close) ", true)
         .title_alignment(Alignment::Center);
+    let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let (head_area, body_area, foot_area) = (parts[0], parts[1], parts[2]);
+
     frame.render_widget(
-        Paragraph::new(text)
-            .style(Style::default().fg(t.text))
-            .block(block),
-        popup,
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "loglens — keybindings",
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ]),
+        head_area,
     );
+
+    // Scroll state lives on App so a resize cannot strand the view past the end.
+    let height = body_area.height as usize;
+    app.help_clamp_scroll(rows, height);
+    let offset = app.help_scroll as u16;
+    let t = &app.theme;
+
+    if two_col {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(left_w as u16),
+                Constraint::Length(HELP_COL_GAP),
+                Constraint::Min(0),
+            ])
+            .split(body_area);
+        frame.render_widget(Paragraph::new(body).scroll((offset, 0)), cols[0]);
+        frame.render_widget(Paragraph::new(right_body).scroll((offset, 0)), cols[2]);
+    } else {
+        frame.render_widget(Paragraph::new(body).scroll((offset, 0)), body_area);
+    }
+
+    // Same scrollbar the log pane uses, and only when it carries information.
+    // It rides the popup's right border rather than the body area, so it never
+    // paints over a description.
+    if rows > height {
+        let mut sb_state = ScrollbarState::new(rows).position(app.help_scroll);
+        let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::default().fg(t.accent))
+            .track_style(Style::default().fg(t.border));
+        let sb_area = Rect {
+            x: popup.x,
+            y: body_area.y,
+            width: popup.width,
+            height: body_area.height,
+        };
+        frame.render_stateful_widget(sb, sb_area, &mut sb_state);
+    }
+
+    let footer = if rows > height {
+        Line::from(vec![
+            Span::styled("j/k", key(t)),
+            Span::styled(" scroll   ", dim(t)),
+            Span::styled("?/q/Esc", key(t)),
+            Span::styled(" close help", dim(t)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("?/q/Esc", key(t)),
+            Span::styled(" close help", dim(t)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(footer), foot_area);
 }
 
 #[cfg(test)]
@@ -1212,6 +1401,121 @@ mod tests {
     use super::*;
     use crate::rules;
     use crate::theme::Theme;
+
+    /// Render the help sheet into an off-screen terminal and return it row by
+    /// row, so the assertions below check painted cells rather than intent.
+    fn render_help_with(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_help(f, app, area);
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn render_help(width: u16, height: u16) -> Vec<String> {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+        render_help_with(&mut app, width, height)
+    }
+
+    /// Display column of `needle`, counting characters rather than bytes so the
+    /// arrow glyphs earlier in a row do not skew the answer.
+    fn column_of(row: &str, needle: &str) -> usize {
+        let byte = row
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing {needle:?}"));
+        row[..byte].chars().count()
+    }
+
+    /// The key column is padded by character count. Byte padding would push the
+    /// descriptions of arrow rows (`↑ ↓ ← →` are 3 bytes each) out of column.
+    #[test]
+    fn help_key_column_aligns_across_multibyte_keys() {
+        let rows = render_help(100, 60);
+        let find = |needle: &str| {
+            rows.iter()
+                .find(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("missing row {needle:?}"))
+        };
+        let arrows = column_of(find("j/k, ↑/↓"), "scroll one line");
+        let ascii = column_of(find("Ctrl-d/Ctrl-u"), "scroll one page");
+        let short = column_of(find("  0  "), "reset horizontal scroll");
+        assert_eq!(arrows, ascii, "multi-byte keys must not shift the column");
+        assert_eq!(ascii, short, "short keys must pad to the same column");
+    }
+
+    #[test]
+    fn help_sheet_uses_two_columns_only_when_the_terminal_can_hold_them() {
+        // 160 cells: the second column fits, so a left row and the first
+        // right-hand section land on the same painted line.
+        let wide = render_help(160, 50);
+        assert!(
+            wide.iter()
+                .any(|r| r.contains("Viewer") && r.contains("Scan & triage")),
+            "wide terminal should reflow into two columns"
+        );
+        // 100 cells: not enough width, so the sheet stays single-column.
+        let narrow = render_help(100, 60);
+        assert!(
+            !narrow
+                .iter()
+                .any(|r| r.contains("Viewer") && r.contains("Scan & triage")),
+            "narrow terminal must stay single-column"
+        );
+    }
+
+    /// The reported defect: at 48 rows the sheet needs a 55-row terminal, so on
+    /// anything shorter the tail used to be unreachable with no cue.
+    #[test]
+    fn help_sheet_tail_is_reachable_on_a_short_terminal() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+
+        let first = render_help_with(&mut app, 80, 24);
+        assert!(
+            !first.iter().any(|r| r.contains("File browser")),
+            "an 80x24 terminal cannot show the whole sheet at once"
+        );
+        let footer = first
+            .iter()
+            .find(|r| r.contains("close help"))
+            .expect("footer");
+        assert!(
+            footer.contains("j/k"),
+            "an overflowing sheet must advertise how to scroll: {footer:?}"
+        );
+
+        app.help_scroll_to_end();
+        let scrolled = render_help_with(&mut app, 80, 24);
+        assert!(
+            scrolled.iter().any(|r| r.contains("File browser")),
+            "the last section must be reachable by scrolling"
+        );
+    }
+
+    #[test]
+    fn help_sheet_hides_the_scroll_hint_when_everything_fits() {
+        let rows = render_help(160, 50);
+        let footer = rows
+            .iter()
+            .find(|r| r.contains("close help"))
+            .expect("footer");
+        assert!(
+            !footer.contains("j/k"),
+            "a sheet that fits should not advertise scrolling: {footer:?}"
+        );
+    }
 
     #[test]
     fn h_scroll_byte_offset_respects_unicode() {
