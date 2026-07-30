@@ -4,7 +4,7 @@ use regex::RegexSet;
 use crate::rules;
 
 /// Severity of a scan finding, ordered low → high so `max`/sort work directly.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Severity {
     Info,
     Low,
@@ -69,6 +69,13 @@ impl Library {
     /// Indices of every signature matching `line`, ascending.
     pub fn matches<'a>(&'a self, line: &str) -> impl Iterator<Item = usize> + 'a {
         self.set.matches(line).into_iter()
+    }
+
+    /// How many signatures the library holds. Callers size per-signature
+    /// bookkeeping with this, so it must stay in step with the match indices
+    /// [`Self::matches`] yields.
+    pub fn signature_count(&self) -> usize {
+        self.signatures.len()
     }
 }
 
