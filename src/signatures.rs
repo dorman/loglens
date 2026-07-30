@@ -4,7 +4,7 @@ use regex::RegexSet;
 use crate::rules;
 
 /// Severity of a scan finding, ordered low → high so `max`/sort work directly.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Severity {
     Info,
     Low,

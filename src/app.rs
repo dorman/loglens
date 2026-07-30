@@ -38,6 +38,16 @@ const EXPORT_STEM: &str = "loglens-findings";
 const EXPORT_DEFAULT_NAME: &str = "loglens-findings.md";
 const MAX_EXPORT_FILES: usize = 99;
 
+/// Severity filter tabs for the findings panel, in the order they are drawn and
+/// cycled. `None` shows everything. Only Medium and above appear because
+/// [`MIN_FINDING_SEVERITY`] keeps anything quieter out of the findings list.
+pub(crate) const FINDING_FILTERS: [Option<Severity>; 4] = [
+    None,
+    Some(Severity::Critical),
+    Some(Severity::High),
+    Some(Severity::Medium),
+];
+
 /// Every hit of signature `sig` within file `file`, collapsed into one entry.
 ///
 /// A noisy log repeats the same condition on hundreds of lines. One finding per
@@ -405,7 +415,15 @@ pub struct App {
     /// Built-in detection library and the results of the last scan.
     pub signatures: Library,
     pub findings: Vec<Finding>,
+    /// Index into `findings`, not into the filtered view. Keeping it absolute
+    /// means jump/step/detail all stay correct while a filter is active.
     pub findings_sel: usize,
+    /// Severity shown in the panel; `None` shows every finding.
+    pub findings_filter: Option<Severity>,
+    /// First visible row of the filtered list. Real scroll state rather than a
+    /// value derived from the selection, so the window stays put as the
+    /// selection moves inside it.
+    pub findings_top: usize,
     pub show_findings: bool,
     /// Present while a scan is running.
     pub scan: Option<ScanState>,
@@ -455,6 +473,8 @@ impl App {
             signatures: Library::builtin(),
             findings: Vec::new(),
             findings_sel: 0,
+            findings_filter: None,
+            findings_top: 0,
             show_findings: false,
             scan: None,
             rescan: None,
@@ -1509,6 +1529,10 @@ impl App {
         self.cancel_rescan();
         self.show_findings = false;
         self.findings.clear();
+        // A filter left over from the previous scan would make a fresh result
+        // look empty, so each scan starts showing everything.
+        self.findings_filter = None;
+        self.findings_top = 0;
         let mut total = 0;
         for f in &mut self.files {
             f.scan_severity = vec![None; f.lines.len()];
@@ -1690,12 +1714,77 @@ impl App {
         self.findings.iter().map(|f| f.count).sum()
     }
 
+    /// Indices into `findings` passing the active filter, in list order.
+    ///
+    /// Recomputed per call rather than cached: findings are one row per (file,
+    /// signature) since grouping landed, so the list is short and a stale cache
+    /// would be a correctness risk for no measurable gain.
+    pub fn visible_findings(&self) -> Vec<usize> {
+        match self.findings_filter {
+            None => (0..self.findings.len()).collect(),
+            Some(sev) => (0..self.findings.len())
+                .filter(|&i| self.signatures[self.findings[i].sig].severity == sev)
+                .collect(),
+        }
+    }
+
+    /// Where the selection sits within the filtered list, if it is visible.
+    fn findings_pos(&self, vis: &[usize]) -> Option<usize> {
+        vis.iter().position(|&i| i == self.findings_sel)
+    }
+
+    /// Step the selection through the filtered list, clamped at both ends.
     pub fn findings_move(&mut self, delta: isize) {
-        if self.findings.is_empty() {
+        let vis = self.visible_findings();
+        if vis.is_empty() {
             return;
         }
-        let n = self.findings.len() as isize;
-        self.findings_sel = (self.findings_sel as isize + delta).clamp(0, n - 1) as usize;
+        // A selection hidden by the filter counts as being before the first row,
+        // so `j` enters the list from the top rather than doing nothing.
+        let pos = self.findings_pos(&vis).unwrap_or(0) as isize;
+        let next = (pos + delta).clamp(0, vis.len() as isize - 1) as usize;
+        self.findings_sel = vis[next];
+    }
+
+    /// Cycle the severity filter. `delta` is in tab positions, wrapping.
+    pub fn cycle_findings_filter(&mut self, delta: isize) {
+        let n = FINDING_FILTERS.len() as isize;
+        let cur = FINDING_FILTERS
+            .iter()
+            .position(|f| *f == self.findings_filter)
+            .unwrap_or(0) as isize;
+        self.findings_filter = FINDING_FILTERS[(((cur + delta) % n + n) % n) as usize];
+
+        // The previous selection may no longer be shown; land on the first row
+        // of the new tab so the detail box always matches something visible.
+        let vis = self.visible_findings();
+        if self.findings_pos(&vis).is_none() {
+            self.findings_sel = vis.first().copied().unwrap_or(0);
+        }
+        self.findings_top = 0;
+        self.status = Some(match self.findings_filter {
+            None => format!("findings: all ({})", self.findings.len()),
+            Some(sev) => format!("findings: {} only ({})", sev.label(), vis.len()),
+        });
+    }
+
+    /// Scroll the filtered list the minimum needed to show the selection in a
+    /// window of `height` rows. The renderer owns the height, so it calls this.
+    pub fn findings_scroll_into_view(&mut self, height: usize) {
+        let vis = self.visible_findings();
+        if vis.is_empty() || height == 0 {
+            self.findings_top = 0;
+            return;
+        }
+        let pos = self.findings_pos(&vis).unwrap_or(0);
+        if pos < self.findings_top {
+            self.findings_top = pos;
+        } else if pos >= self.findings_top + height {
+            self.findings_top = pos - height + 1;
+        }
+        // Never scroll so far that blank rows show below a list that could fill
+        // the window (reachable after switching to a tab with fewer rows).
+        self.findings_top = self.findings_top.min(vis.len().saturating_sub(height));
     }
 
     /// Jump to the next scan finding in severity-ranked order (wraps).
@@ -1717,17 +1806,34 @@ impl App {
             self.status = Some("no findings — press S to scan".into());
             return;
         }
-        let n = self.findings.len();
+        // The active filter defines what the user is triaging, so p/P walk the
+        // same rows the panel shows rather than the whole list.
+        let vis = self.visible_findings();
+        let Some(&first) = vis.first() else {
+            self.status = Some(format!(
+                "no {} findings — press f to change the filter",
+                self.findings_filter.map_or("", |s| s.label())
+            ));
+            return;
+        };
+        let n = vis.len();
+        let pos = self.findings_pos(&vis);
         let selected = self.findings[self.findings_sel];
         let on_selected = self.current == selected.file
             && self.file().view.get(self.file().view_pos).copied() == Some(selected.line);
-        if on_selected {
-            self.findings_sel = if dir > 0 {
-                (self.findings_sel + 1) % n
-            } else {
-                (self.findings_sel + n - 1) % n
-            };
-        }
+        self.findings_sel = match pos {
+            // Selection is hidden by the filter: enter the visible list rather
+            // than stepping from a row that is not on screen.
+            None => first,
+            Some(p) if on_selected => {
+                vis[if dir > 0 {
+                    (p + 1) % n
+                } else {
+                    (p + n - 1) % n
+                }]
+            }
+            Some(p) => vis[p],
+        };
         let f = self.findings[self.findings_sel];
         self.show_findings = false;
         self.jump_to_line(f.file, f.line);
@@ -2315,6 +2421,109 @@ mod tests {
         {
             let _ = link;
         }
+    }
+
+    #[test]
+    fn findings_filter_narrows_visible_rows_and_cycles() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        assert!(app.findings.len() >= 2);
+        assert!(
+            app.findings_filter.is_none(),
+            "a fresh scan starts unfiltered"
+        );
+        assert_eq!(app.visible_findings().len(), app.findings.len());
+
+        for _ in 0..FINDING_FILTERS.len() {
+            app.cycle_findings_filter(1);
+            let vis = app.visible_findings();
+            match app.findings_filter {
+                None => assert_eq!(vis.len(), app.findings.len()),
+                Some(sev) => {
+                    assert!(
+                        vis.iter()
+                            .all(|&i| app.signatures[app.findings[i].sig].severity == sev),
+                        "every visible row must match the active tab"
+                    );
+                    // The selection always addresses something on screen.
+                    if !vis.is_empty() {
+                        assert!(vis.contains(&app.findings_sel));
+                    }
+                }
+            }
+        }
+        assert_eq!(app.findings_filter, None, "cycling wraps back to all");
+
+        // Cycling backwards lands on the last tab.
+        app.cycle_findings_filter(-1);
+        assert_eq!(app.findings_filter, *FINDING_FILTERS.last().unwrap());
+    }
+
+    /// The window must move the minimum needed to reveal the selection. The old
+    /// derived-`top` behaviour pinned the selection to the bottom row instead,
+    /// so the list lurched on every step past the first page.
+    #[test]
+    fn findings_scroll_moves_the_minimum_to_reveal_the_selection() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        // Synthesise a long list so scrolling is exercised without opening
+        // hundreds of files; grouping keeps real corpora short.
+        let sig = app.findings[0].sig;
+        app.findings = (0..50)
+            .map(|i| Finding {
+                file: 0,
+                line: i,
+                sig,
+                last: i,
+                count: 1,
+            })
+            .collect();
+        app.findings_sel = 0;
+        app.findings_top = 0;
+
+        app.findings_scroll_into_view(10);
+        assert_eq!(app.findings_top, 0, "selection already visible: no scroll");
+
+        app.findings_sel = 10;
+        app.findings_scroll_into_view(10);
+        assert_eq!(
+            app.findings_top, 1,
+            "one row past the bottom scrolls by one"
+        );
+
+        app.findings_sel = 30;
+        app.findings_scroll_into_view(10);
+        assert_eq!(app.findings_top, 21);
+
+        app.findings_sel = 20;
+        app.findings_scroll_into_view(10);
+        assert_eq!(
+            app.findings_top, 20,
+            "scrolling back up also moves minimally"
+        );
+
+        app.findings_sel = 49;
+        app.findings_scroll_into_view(10);
+        assert_eq!(
+            app.findings_top, 40,
+            "last row must not leave blank rows below"
+        );
+    }
+
+    #[test]
+    fn new_scan_clears_a_stale_findings_filter() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        app.findings_filter = Some(Severity::Critical);
+        app.findings_top = 7;
+
+        run_scan_to_completion(&mut app);
+        assert!(
+            app.findings_filter.is_none(),
+            "a filter left over from the previous scan would make a fresh \
+             result look empty"
+        );
+        assert_eq!(app.findings_top, 0);
     }
 
     /// A repeated condition must cost one row and a count, not one row per line.

@@ -133,8 +133,10 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 // the exact list rect (the popup also contains a severity bar
                 // and detail box, which must not map to findings).
                 if hit(r.findings_list, col, row) {
-                    let idx = r.findings_top + (row - r.findings_list.y) as usize;
-                    if idx < app.findings.len() {
+                    // Rows map to the filtered list, so translate through it
+                    // rather than indexing `findings` directly.
+                    let pos = r.findings_top + (row - r.findings_list.y) as usize;
+                    if let Some(&idx) = app.visible_findings().get(pos) {
                         app.findings_sel = idx;
                         app.findings_jump();
                     }
@@ -278,6 +280,8 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
             KeyCode::Char('j') | KeyCode::Down => app.findings_move(1),
             KeyCode::Char('k') | KeyCode::Up => app.findings_move(-1),
+            KeyCode::Char('f') | KeyCode::Right => app.cycle_findings_filter(1),
+            KeyCode::Char('F') | KeyCode::Left => app.cycle_findings_filter(-1),
             KeyCode::Char('p') => app.next_finding(),
             KeyCode::Char('P') => app.prev_finding(),
             KeyCode::Enter => app.findings_jump(),

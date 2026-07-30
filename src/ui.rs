@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 use regex::Regex;
 
-use crate::app::{App, InputKind, LogFile, MatchSpan, Mode};
+use crate::app::{App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode};
 use crate::rules::Rule;
 use crate::signatures::Severity;
 use crate::theme::{self, Theme};
@@ -864,8 +864,34 @@ fn dim(t: &Theme) -> Style {
     Style::default().fg(t.text_dim)
 }
 
-fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
+/// Severity filter tabs with per-tab counts. The active tab is reversed rather
+/// than merely coloured, so it reads as selected on terminals that render the
+/// severity palette faintly.
+fn findings_filter_tabs(app: &App, counts: [usize; 5]) -> Line<'static> {
     let t = &app.theme;
+    let mut spans = vec![Span::styled(" filter ", Style::default().fg(t.text_dim))];
+    for opt in FINDING_FILTERS {
+        let (label, n, colour) = match opt {
+            None => ("all", app.findings.len(), t.text),
+            Some(sev) => (sev.label(), counts[sev as usize], sev.color()),
+        };
+        let active = app.findings_filter == opt;
+        let mut style = Style::default().fg(colour);
+        if active {
+            style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+        } else if n == 0 {
+            // An empty tab is still selectable, but dim so it does not compete
+            // with tabs that have something in them.
+            style = Style::default().fg(t.text_dim);
+        }
+        spans.push(Span::styled(format!(" {label} {n} "), style));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled("f/F or ←/→", key(t)));
+    Line::from(spans)
+}
+
+fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     let popup = centered_rect(84, 84, area);
     app.regions.findings = popup;
 
@@ -880,38 +906,43 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
         " Scan findings — {}   {} crit · {} high · {} med · {} low · {} info ",
         scale, c[4], c[3], c[2], c[1], c[0],
     );
-    let block = t.panel(&title, true);
+    let block = app.theme.panel(&title, true);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
 
-    // Severity distribution bar, then the list, then a detail box.
+    // Severity bar, filter tabs, the list, then a detail box.
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(3),
             Constraint::Length(5),
         ])
         .split(inner);
     let bar_area = parts[0];
-    let list_area = parts[1];
-    let detail_area = parts[2];
+    let tabs_area = parts[1];
+    let list_area = parts[2];
+    let detail_area = parts[3];
     app.regions.findings_list = list_area;
 
     frame.render_widget(Paragraph::new(severity_bar(c, bar_area.width)), bar_area);
+    frame.render_widget(Paragraph::new(findings_filter_tabs(app, c)), tabs_area);
 
+    // Scroll state lives on App so the window holds still while the selection
+    // moves inside it; only the height is a render-time fact.
     let list_height = list_area.height as usize;
-    let top = if app.findings_sel >= list_height {
-        app.findings_sel - list_height + 1
-    } else {
-        0
-    };
+    app.findings_scroll_into_view(list_height);
+    let visible = app.visible_findings();
+    let top = app.findings_top.min(visible.len());
     app.regions.findings_top = top;
-    let end = (top + list_height).min(app.findings.len());
+    let end = (top + list_height).min(visible.len());
 
+    // Borrowed only after the &mut scroll update above.
+    let t = &app.theme;
     let mut items: Vec<ListItem> = Vec::new();
-    for i in top..end {
+    for &i in &visible[top..end] {
         let f = app.findings[i];
         let sig = &app.signatures[f.sig];
         let is_sel = i == app.findings_sel;
@@ -966,8 +997,17 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     frame.render_widget(List::new(items), list_area);
 
-    // Detail box: explanation + the matched line for the current selection.
-    let detail = if let Some(f) = app.findings.get(app.findings_sel).copied() {
+    // Detail box: explanation + the matched line for the current selection. A
+    // filter with no matches shows why the list is empty rather than nothing.
+    let detail = if visible.is_empty() && !app.findings.is_empty() {
+        vec![Line::from(Span::styled(
+            format!(
+                "no {} findings — press f to change the filter",
+                app.findings_filter.map_or("", |s| s.label())
+            ),
+            Style::default().fg(app.theme.text_dim),
+        ))]
+    } else if let Some(f) = app.findings.get(app.findings_sel).copied() {
         let sig = &app.signatures[f.sig];
         let excerpt = app
             .files
