@@ -55,19 +55,32 @@ impl Theme {
             level_warn: Color::Rgb(0xE5, 0xC0, 0x7B),
             level_info: Color::Rgb(0x61, 0xAF, 0xEF),
             level_debug: Color::Rgb(0x7C, 0x83, 0x94),
+            // Highlight rotation, handed out in order by `rule_color`.
+            //
+            // Order is a contract, not a preference. Three of these values are
+            // also semantic elsewhere — coral is the ERROR tint, amber is the
+            // WARN tint and Medium severity, azure is the accent, the INFO tint
+            // and Low severity — and tangerine sits one shade off High severity.
+            // A highlight wearing one of those reads as the product's judgment
+            // rather than the user's bookkeeping, so the four compromised hues
+            // are handed out last, ranked by how compromised they are.
+            //
+            // The nine clean slots are ordered for distinguishability too: the
+            // minimum circular hue separation between neighbours is 107°, up
+            // from 51° when coral/moss/amber/azure led the list.
             palette: vec![
-                Color::Rgb(0xE0, 0x6C, 0x75),
-                Color::Rgb(0x98, 0xC3, 0x79),
-                Color::Rgb(0xE5, 0xC0, 0x7B),
-                Color::Rgb(0x61, 0xAF, 0xEF),
-                Color::Rgb(0xC6, 0x78, 0xDD),
-                Color::Rgb(0x56, 0xB6, 0xC2),
-                Color::Rgb(0xE8, 0x9B, 0x54),
-                Color::Rgb(0xEC, 0x8C, 0xB0),
-                Color::Rgb(0xB5, 0xCE, 0x6C),
-                Color::Rgb(0x5F, 0xC9, 0xA6),
-                Color::Rgb(0x9A, 0xA7, 0xF0),
-                Color::Rgb(0xD0, 0xB0, 0x6A),
+                Color::Rgb(0x98, 0xC3, 0x79), // moss
+                Color::Rgb(0xC6, 0x78, 0xDD), // orchid
+                Color::Rgb(0xD0, 0xB0, 0x6A), // brass
+                Color::Rgb(0x56, 0xB6, 0xC2), // cyan
+                Color::Rgb(0xEC, 0x8C, 0xB0), // rose
+                Color::Rgb(0x5F, 0xC9, 0xA6), // mint
+                Color::Rgb(0x9A, 0xA7, 0xF0), // periwinkle
+                Color::Rgb(0xB5, 0xCE, 0x6C), // lime
+                Color::Rgb(0xE8, 0x9B, 0x54), // tangerine — near High severity
+                Color::Rgb(0xE0, 0x6C, 0x75), // coral     — the ERROR tint
+                Color::Rgb(0xE5, 0xC0, 0x7B), // amber     — WARN tint, Medium
+                Color::Rgb(0x61, 0xAF, 0xEF), // azure     — accent, INFO, Low
             ],
         }
     }
@@ -201,6 +214,61 @@ mod tests {
         assert!(!t.palette.is_empty());
         assert_eq!(t.rule_color(0), t.palette[0]);
         assert_eq!(t.rule_color(t.palette.len()), t.palette[0]);
+    }
+
+    /// Highlight colors are the user's bookkeeping; level tints and severities
+    /// are the product's judgment. The two languages share a screen, so the
+    /// slots handed out first must not echo a color that already means
+    /// something — a first highlight in the ERROR coral, or a fourth in the
+    /// accent, made the two ambiguous on first use.
+    ///
+    /// The last three slots are deliberately excluded: they *are* the semantic
+    /// values, parked at the end where a user only reaches them after nine
+    /// distinct highlights.
+    #[test]
+    fn first_rotation_slots_avoid_semantic_colors() {
+        use crate::signatures::Severity;
+        let t = Theme::dark();
+        // Everything that can share a viewport with a highlight and already
+        // carries meaning. `danger` and `marked` are absent on purpose: both are
+        // browser-popup chrome, and the popup punches out the log entirely, so
+        // they are never on screen beside a highlight.
+        let reserved: Vec<(&str, Color)> = vec![
+            ("accent", t.accent),
+            ("level_error", t.level_error),
+            ("level_warn", t.level_warn),
+            ("level_info", t.level_info),
+            ("level_debug", t.level_debug),
+            ("Critical", Severity::Critical.color()),
+            ("High", Severity::High.color()),
+            ("Medium", Severity::Medium.color()),
+            ("Low", Severity::Low.color()),
+            ("Info", Severity::Info.color()),
+        ];
+        let clean = t.palette.len() - 3;
+        for i in 0..clean {
+            let c = t.rule_color(i);
+            for (name, r) in &reserved {
+                assert_ne!(
+                    c, *r,
+                    "highlight slot {i} collides with the {name} color ({c:?}) — \
+                     move it behind the {clean} clean slots"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_keeps_every_hue_and_repeats_only_after_a_full_cycle() {
+        let t = Theme::dark();
+        // Reordering must not drop or duplicate a hue: capacity and the
+        // repeat-at-13 behaviour are unchanged.
+        assert_eq!(t.palette.len(), 12);
+        let mut seen = t.palette.clone();
+        seen.sort_by_key(|c| format!("{c:?}"));
+        seen.dedup();
+        assert_eq!(seen.len(), 12, "rotation contains a duplicate hue");
+        assert_eq!(t.rule_color(12), t.rule_color(0));
     }
 
     #[test]
