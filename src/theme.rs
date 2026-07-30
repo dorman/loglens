@@ -17,6 +17,12 @@ pub struct Theme {
     pub search_bg: Color,
     pub logo_top: Color,
     pub logo_bottom: Color,
+    /// Chrome semantics for the file browser: a failed directory read and a
+    /// marked entry. Deliberately *not* taken from [`Theme::palette`] — the
+    /// rotation belongs to the user's highlights, so borrowing an index from it
+    /// would make the browser's colors change whenever that order changes.
+    pub danger: Color,
+    pub marked: Color,
     /// Soft foreground tints for common log levels (non-highlight text).
     pub level_error: Color,
     pub level_warn: Color,
@@ -41,6 +47,10 @@ impl Theme {
             search_bg: Color::Rgb(0xF5, 0xF5, 0xF5),
             logo_top: Color::Rgb(0x5B, 0x84, 0xEF),
             logo_bottom: Color::Rgb(0x3E, 0xE0, 0xD8),
+            // The values the old `palette[0]` / `palette[1]` lookups resolved
+            // to, so extracting them changed nothing on screen.
+            danger: Color::Rgb(0xE0, 0x6C, 0x75),
+            marked: Color::Rgb(0x98, 0xC3, 0x79),
             level_error: Color::Rgb(0xE0, 0x6C, 0x75),
             level_warn: Color::Rgb(0xE5, 0xC0, 0x7B),
             level_info: Color::Rgb(0x61, 0xAF, 0xEF),

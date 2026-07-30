@@ -812,9 +812,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
             style = style.fg(t.accent);
         }
         if marked {
-            style = style
-                .fg(t.palette[1 % t.palette.len()])
-                .add_modifier(Modifier::BOLD);
+            style = style.fg(t.marked).add_modifier(Modifier::BOLD);
         }
         if is_sel {
             style = Style::default()
@@ -834,10 +832,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     // A directory read error takes over the footer row (rendering it inside
     // the list would shift entries and break mouse-click row mapping).
     let footer = if let Some(err) = &b.error {
-        Line::from(Span::styled(
-            err.clone(),
-            Style::default().fg(t.palette[0 % t.palette.len()]),
-        ))
+        Line::from(Span::styled(err.clone(), Style::default().fg(t.danger)))
     } else {
         Line::from(vec![
             Span::styled("Enter", key(t)),
