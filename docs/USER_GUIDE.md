@@ -80,8 +80,8 @@ separately when ready:
 ```sh
 git checkout master
 git pull
-git tag v0.0.1
-git push origin v0.0.1
+git tag v0.1.0
+git push origin v0.1.0
 # GitHub Actions attaches Linux/macOS/Windows archives to the release.
 # crates.io (optional, separate step — needs credentials):
 #   cargo publish
@@ -203,9 +203,23 @@ line.
 
 ## Scan: automatic triage
 
-Press **`S`**. loglens runs every open file through its built-in library of
-known-bad signatures — no keywords or setup required — and presents a
-**findings panel** ranked by severity.
+**A scan starts on its own.** Opening anything — a file from the command line,
+a selection from the browser, a folder or `.zip` — runs every open file through
+the built-in library of known-bad signatures and presents a **findings panel**
+ranked by severity. No keywords, no setup, no keystroke.
+
+While it runs, the progress bar is the report assembling: its length is real
+progress and its color is the severity mix found so far, so a bar that stays
+accent-blue means nothing has turned up yet. `Esc` cancels at any point.
+
+Press **`S`** to rescan (after adding highlights, or on files opened with
+`--no-scan`). Findings are global, so opening more files rescans the whole set
+and keeps one complete report. Pass `--no-scan` when you want to open a large
+bundle just to read it.
+
+When a scan finds nothing, no panel opens — the status line reports what was
+covered instead, e.g. `scan complete — nothing notable in 9004 lines across 3
+files`.
 
 What the library covers: security tampering (protection disabled), encoded
 PowerShell commands, process injection, commonly-abused system binaries
@@ -354,6 +368,7 @@ loglens [OPTIONS] [FILES]...
 | `-k, --keyword <KEYWORD>` | literal keyword highlight; repeatable or comma-separated (`-k "timeout,rollback"`) |
 | `-r, --regex <PATTERN>` | regex highlight; repeatable |
 | `-i, --ignore-case` | case-insensitive matching for all rules (this session; also OR'd with the saved `i` preference) |
+| `--no-scan` | don't scan on open; press `S` when you want it |
 | `--version` | print version |
 | `--help` | print CLI help |
 

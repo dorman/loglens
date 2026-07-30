@@ -1765,6 +1765,20 @@ impl App {
         })
     }
 
+    /// Severity mix of the *in-flight* scan, indexed like [`Self::severity_counts`].
+    /// The progress bar paints this, so the reader watches the verdict assemble
+    /// before the panel opens; `self.findings` is still the previous scan's (or
+    /// empty) until `finalize_scan` commits, so it cannot serve here.
+    pub fn scan_severity_counts(&self) -> Option<[usize; 5]> {
+        self.scan.as_ref().map(|s| {
+            let mut c = [0usize; 5];
+            for f in &s.findings {
+                c[self.signatures[f.sig].severity as usize] += 1;
+            }
+            c
+        })
+    }
+
     /// Counts indexed by `Severity as usize` (Info=0 .. Critical=4).
     /// Distinct findings per severity — one per (file, signature) group, not one
     /// per matching line. See [`Self::occurrence_count`] for raw hits.

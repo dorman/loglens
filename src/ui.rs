@@ -5,8 +5,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
-    Wrap,
+    Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap,
 };
 use regex::Regex;
 
@@ -37,16 +36,101 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_work_progress(
-    frame: &mut Frame,
-    theme: &Theme,
-    area: Rect,
-    title: &str,
+/// Cells reserved at the right of the work-bar row for `" 100%"`. Fixed, so the
+/// bar does not shift sideways as the number gains a digit.
+const PCT_FIELD: u16 = 5;
+
+/// Content-width floor for the progress overlay. Below this the bar is too
+/// coarse to read a severity mix off, so the panel keeps the width even when its
+/// text rows would fit in less.
+const PROGRESS_MIN_CONTENT: u16 = 44;
+
+/// The work bar: length is real progress, composition is the verdict so far.
+///
+/// `counts` is the severity mix found up to this point — the same stacked bar
+/// the findings panel shows, scaled to the scanned length, so the report is
+/// already half-read by the time it opens. `None` (or nothing found yet) fills
+/// in accent, which is the honest reading of "running, clean so far". `▌` marks
+/// the boundary between read and unread, `░` carries the remainder, and both
+/// vanish at 100% rather than implying more to come.
+fn work_bar(theme: &Theme, counts: Option<[usize; 5]>, frac: f64, width: u16) -> Line<'static> {
+    let frac = frac.clamp(0.0, 1.0);
+    let bar_width = width.saturating_sub(PCT_FIELD);
+    let filled = ((frac * bar_width as f64).round() as u16).min(bar_width);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let segments = counts
+        .map(|c| severity_segments(c, filled))
+        .unwrap_or_default();
+    if segments.is_empty() {
+        if filled > 0 {
+            spans.push(Span::styled(
+                "\u{2588}".repeat(filled as usize),
+                Style::default().fg(theme.accent),
+            ));
+        }
+    } else {
+        for (sev, seg) in segments {
+            spans.push(Span::styled(
+                "\u{2588}".repeat(seg),
+                Style::default().fg(sev.color()),
+            ));
+        }
+    }
+
+    let remaining = bar_width - filled;
+    if remaining > 0 {
+        spans.push(Span::styled(
+            "\u{258C}",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            "\u{2591}".repeat((remaining - 1) as usize),
+            Style::default().fg(theme.border),
+        ));
+    }
+
+    let pct = (frac * 100.0).round() as u16;
+    spans.push(Span::styled(
+        format!("{pct:>4}%"),
+        Style::default().fg(theme.text),
+    ));
+    Line::from(spans)
+}
+
+/// Everything the progress overlay differs on between a scan and a rescan.
+struct WorkProgress<'a> {
+    title: &'a str,
     frac: f64,
+    /// Severity mix found so far, or `None` for work with no verdict to paint.
+    counts: Option<[usize; 5]>,
     info: Line<'static>,
-    file_name: &str,
-) {
-    let rect = centered_rect_lines(area, 56, 6);
+    file_name: String,
+}
+
+fn draw_work_progress(frame: &mut Frame, theme: &Theme, area: Rect, work: WorkProgress<'_>) {
+    let WorkProgress {
+        title,
+        frac,
+        counts,
+        info,
+        file_name,
+    } = work;
+
+    let sub = Line::from(vec![
+        Span::styled(format!(" {file_name}"), dim(theme)),
+        Span::styled("      Esc to cancel", dim(theme)),
+    ]);
+
+    // Sized to its own rows, not to a share of the terminal: a live counter that
+    // truncates mid-number is worse than a narrower panel.
+    let content = PROGRESS_MIN_CONTENT
+        .max(info.width() as u16 + 1)
+        .max(sub.width() as u16 + 1)
+        .max(title.chars().count() as u16 + 2);
+    let rect = centered_rect_cells(area, content.saturating_add(2), 5);
     let block = theme.panel(title, true);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
@@ -61,18 +145,11 @@ fn draw_work_progress(
         ])
         .split(inner);
 
-    let pct = (frac * 100.0).round() as u16;
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(theme.accent).bg(theme.cursor_bg))
-        .ratio(frac.clamp(0.0, 1.0))
-        .label(format!("{pct}%"));
-    frame.render_widget(gauge, rows[0]);
+    frame.render_widget(
+        Paragraph::new(work_bar(theme, counts, frac, rows[0].width)),
+        rows[0],
+    );
     frame.render_widget(Paragraph::new(info), rows[1]);
-
-    let sub = Line::from(vec![
-        Span::styled(format!(" {file_name}"), dim(theme)),
-        Span::styled("      Esc to cancel", dim(theme)),
-    ]);
     frame.render_widget(Paragraph::new(sub), rows[2]);
 }
 
@@ -97,10 +174,13 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         t,
         area,
-        " Scanning for known-bad signatures… ",
-        frac,
-        info,
-        &file_name,
+        WorkProgress {
+            title: " Scanning for known-bad signatures… ",
+            frac,
+            counts: app.scan_severity_counts(),
+            info,
+            file_name,
+        },
     );
 }
 
@@ -125,20 +205,29 @@ fn draw_rescan_progress(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         t,
         area,
-        " Updating highlights… ",
-        frac,
-        info,
-        &file_name,
+        WorkProgress {
+            title: " Updating highlights… ",
+            frac,
+            // A rescan has no verdict to paint — same component, one less dimension.
+            counts: None,
+            info,
+            file_name,
+        },
     );
 }
 
-/// A one-line stacked bar depicting the severity mix of the findings.
-fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
+/// Split `width` cells across the severity mix in `counts`, Critical → Info,
+/// left to right. Every present severity gets at least one cell so a lone
+/// Critical among a thousand Mediums cannot round away to nothing.
+///
+/// Shared by the findings panel's severity bar and the progress overlay's work
+/// bar: same proportions, same order, same one-cell floor — the second is the
+/// first scaled to however much of the corpus has been read.
+fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize)> {
     let total: usize = counts.iter().sum();
     if total == 0 || width == 0 {
-        return Line::from("");
+        return Vec::new();
     }
-    // Critical → Info, left to right.
     let order = [
         (Severity::Critical, 4usize),
         (Severity::High, 3),
@@ -148,7 +237,7 @@ fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
     ];
     let w = width as usize;
     let mut used = 0usize;
-    let mut spans = Vec::new();
+    let mut segments = Vec::new();
     for (sev, idx) in order {
         let c = counts[idx];
         if c == 0 {
@@ -162,12 +251,26 @@ fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
         if seg == 0 {
             break;
         }
-        spans.push(Span::styled(
-            "\u{2588}".repeat(seg),
-            Style::default().fg(sev.color()),
-        ));
+        segments.push((sev, seg));
         used += seg;
     }
+    // Rounding can leave the run a cell or two short of `width`. Give the
+    // shortfall to the last segment: in the work bar the run's *length* is the
+    // progress reading, so it has to land exactly where the head is.
+    if used < w
+        && let Some(last) = segments.last_mut()
+    {
+        last.1 += w - used;
+    }
+    segments
+}
+
+/// A one-line stacked bar depicting the severity mix of the findings.
+fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
+    let spans = severity_segments(counts, width)
+        .into_iter()
+        .map(|(sev, seg)| Span::styled("\u{2588}".repeat(seg), Style::default().fg(sev.color())))
+        .collect::<Vec<_>>();
     Line::from(spans)
 }
 
@@ -1588,6 +1691,108 @@ mod tests {
         let bar = severity_bar(counts, 10);
         assert!(bar.width() <= 10);
         assert!(!bar.spans.is_empty());
+    }
+
+    /// The work bar reads its length as progress, so a rounding shortfall would
+    /// put the run and the `▌` head in different places.
+    #[test]
+    fn severity_segments_span_the_full_width() {
+        for counts in [[1, 0, 2, 0, 1], [0, 0, 0, 0, 1], [3, 3, 3, 3, 3]] {
+            for width in [1u16, 7, 10, 44, 137] {
+                let total: usize = severity_segments(counts, width).iter().map(|s| s.1).sum();
+                assert_eq!(total, width as usize, "counts {counts:?} at width {width}");
+            }
+        }
+        assert!(severity_segments([0; 5], 40).is_empty());
+        assert!(severity_segments([1, 0, 0, 0, 0], 0).is_empty());
+    }
+
+    /// Cells of `s` in `line`, and the color of the first cell that isn't track.
+    fn bar_parts(line: &Line<'static>) -> (usize, usize, usize, Option<ratatui::style::Color>) {
+        let mut filled = 0;
+        let mut head = 0;
+        let mut track = 0;
+        let mut lead = None;
+        for span in &line.spans {
+            for ch in span.content.chars() {
+                match ch {
+                    '\u{2588}' => {
+                        if lead.is_none() {
+                            lead = span.style.fg;
+                        }
+                        filled += 1;
+                    }
+                    '\u{258C}' => head += 1,
+                    '\u{2591}' => track += 1,
+                    _ => {}
+                }
+            }
+        }
+        (filled, head, track, lead)
+    }
+
+    #[test]
+    fn work_bar_reserves_a_fixed_percentage_field_and_length_tracks_progress() {
+        let t = Theme::dark();
+        for width in [PROGRESS_MIN_CONTENT, 60, 100] {
+            for (frac, pct) in [(0.0, "   0%"), (0.5, "  50%"), (1.0, " 100%")] {
+                let line = work_bar(&t, None, frac, width);
+                assert_eq!(line.width(), width as usize, "width {width} at {frac}");
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                assert!(text.ends_with(pct), "{text:?}");
+
+                // Bar cells (filled + head + track) always fill what's left.
+                let bar = (width - PCT_FIELD) as usize;
+                let (filled, head, track, _) = bar_parts(&line);
+                assert_eq!(filled + head + track, bar);
+                assert_eq!(filled, (frac * bar as f64).round() as usize);
+            }
+        }
+    }
+
+    #[test]
+    fn work_bar_paints_the_severity_mix_found_so_far() {
+        let t = Theme::dark();
+        // One Critical among Mediums still leads the bar — same order as the
+        // findings panel, so the reader recognises the shape when it opens.
+        let line = work_bar(&t, Some([0, 0, 6, 0, 1]), 0.5, 60);
+        let (_, _, _, lead) = bar_parts(&line);
+        assert_eq!(lead, Some(Severity::Critical.color()));
+
+        // Nothing found yet reads as "running, clean so far", not as empty.
+        let clean = work_bar(&t, Some([0; 5]), 0.5, 60);
+        let (filled, _, _, lead) = bar_parts(&clean);
+        assert_eq!(lead, Some(t.accent));
+        assert!(filled > 0);
+
+        // A rescan has no verdict, so it is the same single-accent bar.
+        let (rescan_filled, _, _, rescan_lead) = bar_parts(&work_bar(&t, None, 0.5, 60));
+        assert_eq!((rescan_filled, rescan_lead), (filled, Some(t.accent)));
+    }
+
+    #[test]
+    fn work_bar_drops_the_head_and_track_at_completion() {
+        let t = Theme::dark();
+        let running = work_bar(&t, None, 0.7, 60);
+        let (_, head, track, _) = bar_parts(&running);
+        assert_eq!(head, 1, "one boundary cell while work remains");
+        assert!(track > 0);
+
+        // Nothing left to read: neither glyph implies more to come.
+        let done = work_bar(&t, Some([0, 0, 1, 0, 0]), 1.0, 60);
+        let (filled, head, track, _) = bar_parts(&done);
+        assert_eq!((head, track), (0, 0));
+        assert_eq!(filled, (60 - PCT_FIELD) as usize);
+    }
+
+    /// A terminal narrower than the panel's floor must not panic or wrap.
+    #[test]
+    fn work_bar_survives_widths_below_the_percentage_field() {
+        let t = Theme::dark();
+        for width in 0..=PCT_FIELD + 2 {
+            let line = work_bar(&t, Some([0, 0, 1, 0, 1]), 0.5, width);
+            assert!(line.width() <= (width as usize).max(PCT_FIELD as usize));
+        }
     }
 
     #[test]

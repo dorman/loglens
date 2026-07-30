@@ -256,7 +256,7 @@ The unit is the character cell, and the grid is absolute: every row is exactly o
 
 **Spacing rhythm**: 1 cell separates adjacent spans; 2 cells form the glyph slot; a 3-cell-dot-3-cell separator (`   ·   `) divides metadata groups inside progress and status rows; 4 cells is the minimum gutter. Status metadata joins with ` · ` and appears only when non-default — no filter means no filter segment, not an empty one.
 
-**Overlays** are centered rects, sized by intent rather than a shared modal scale: findings 84%×84% (the working surface — it earns the most room), browser 74%×76%, input 60%×3 cells, progress 56 cells×6 cells. The help sheet is the exception that proves the rule: it is sized to **its own content** in cells, not to a share of the terminal, because a keybinding reference that truncates its own descriptions is worse than one that scrolls. It takes the width its widest row needs, reflows into two columns when both fit (~135 cells), and caps its height at 92% of the terminal, scrolling the remainder. The findings panel subdivides its interior into a 1-cell severity bar, a 1-cell filter-tab row, a `Min(3)` list, and a fixed 5-cell detail box — the detail box never grows, so the list is the only thing that responds to height.
+**Overlays** are centered rects, sized by intent rather than a shared modal scale: findings 84%×84% (the working surface — it earns the most room), browser 74%×76%, input 60%×3 cells. The progress overlay and the help sheet are both sized to their own content in cells instead — a live counter or a keybinding row that truncates mid-word is worse than a narrower panel. The help sheet takes the width its widest row needs, reflows into two columns when both fit (~135 cells), and caps its height at 92% of the terminal, scrolling the remainder. The findings panel subdivides its interior into a 1-cell severity bar, a 1-cell filter-tab row, a `Min(3)` list, and a fixed 5-cell detail box — the detail box never grows, so the list is the only thing that responds to height.
 
 **Responsive behavior** is width-driven and discrete. Below roughly 65 cells of pane width the display banner swaps to its 34-cell variant. The legend is a user toggle (`l`, persisted) rather than an automatic breakpoint — loglens does not decide for the user that their terminal is too small. Scrollbars appear only when content overflows, inset one cell from the panel's top and bottom so they never collide with the border arcs.
 
@@ -286,7 +286,7 @@ One container form, one corner language: a full box border in rounded-arc glyphs
 
 Titles are inlaid into the top border rather than placed below it, which buys back a row and makes the frame carry state instead of merely enclosing it. Centered titles are used exactly once, on the help sheet.
 
-The geometric vocabulary is small and each glyph means one thing: `●` a scanned severity, `◆` a bookmark, `▸` the active legend rule, `██` a highlight's color swatch, `│` the gutter rule, `‹` content hidden to the left, `›` an input prompt, `█` the input caret, `✓` a marked file, `×N` a repeat count. Emoji appear in exactly one place — `📁`/`📄` in the file browser — and that is the ceiling, not a precedent.
+The geometric vocabulary is small and each glyph means one thing: `●` a scanned severity, `◆` a bookmark, `▸` the active legend rule, `██` a highlight's color swatch, `│` the gutter rule, `‹` content hidden to the left, `›` an input prompt, `█` the input caret, `✓` a marked file, `×N` a repeat count, `▌` the leading edge of work in progress, `░` the part not yet read. Emoji appear in exactly one place — `📁`/`📄` in the file browser — and that is the ceiling, not a precedent.
 
 ### Named Rules
 
@@ -354,7 +354,10 @@ A one-cell-tall stacked bar of `█` blocks, Critical to Info left to right, eac
 
 ### Progress Overlay
 
-- **Style:** 56×6 rounded panel, Signal Blue gauge on Row Wash track with a percentage label, then a live detail row (`1247/9000 lines   ·   4 findings so far`, the count in accent), then a dim row naming the current file and `Esc to cancel`.
+- **Style:** a 5-row rounded panel sized to its own rows (never a share of the terminal), with a 44-cell content floor so the bar stays coarse enough to read a severity mix off. Row one is the work bar with a right-aligned percentage in a fixed 5-cell field, so the bar does not shift sideways as the number gains a digit; row two is a live detail row (`1247/9000 lines   ·   4 findings so far`, the count in accent); row three is a dim row naming the current file and `Esc to cancel`.
+- **The work bar is the verdict assembling.** Its *length* is real progress and its *composition* is the severity mix found so far — the same Critical→Info order and one-cell floor as the findings panel's severity bar, scaled to the scanned length. A scan that has found nothing fills in Signal Blue, which is the honest reading of "running, clean so far"; the first Critical repaints the run in Alarm Red. By the time the panel opens, the reader has already watched its severity bar form.
+- **The head marks the boundary.** `▌` in accent sits between what has been read and what has not, and `░` in Panel Graphite carries the remainder. At 100% both disappear rather than implying more to come.
+- **Motion comes only from real work.** The head advances because lines were scanned, never on a timer. A rescan has no verdict to paint, so its bar stays a single accent — same component, one less dimension.
 - **Distinctive behavior:** long work is chunked and always cancellable, and the overlay says so. Progress is never shown without an exit.
 
 ### Empty States
@@ -377,7 +380,8 @@ Vertically centered in the log pane: the gradient banner, the version, the line 
 - **Do** end every surface with its next move as a literal keycap in Signal Blue with dim prose beside it.
 - **Do** express recession with a dimmer color, and reserve `REVERSED` for the active severity filter tab.
 - **Do** show a segment only when it carries information — no `×1`, no empty filter marker, no scrollbar on content that fits.
-- **Do** make long work chunked, cancellable, and honest about its progress.
+- **Do** make long work chunked, cancellable, and honest about its progress — and let the progress carry the finding, not just the percentage.
+- **Do** tie motion to real work. The bar head moves because lines were read; nothing in this product animates on a timer.
 - **Do** distinguish "nothing here" from "nothing matched" in every empty state.
 
 ### Don't:
@@ -393,6 +397,7 @@ Vertically centered in the log pane: the gradient banner, the version, the line 
 - **Don't** restyle the log's own text for emphasis, or let horizontal panning change a line's tint.
 - **Don't** add a 13th highlight hue, or reorder the first nine, without checking against all four level tints and all five severity steps — `first_rotation_slots_avoid_semantic_colors` will fail if you do.
 - **Don't** borrow a rotation index for chrome. `danger` and `marked` exist because `palette[0]` and `palette[1]` were standing in for them, which silently coupled the browser's colors to the highlight order.
-- **Don't** size a reference surface to a percentage of the terminal when its content has a natural width. Truncated help is worse than scrolled help.
+- **Don't** size a surface to a percentage of the terminal when its content has a natural width. Truncated help, or a truncated live counter, is worse than a narrower panel.
+- **Don't** animate on a timer, spin a decorative glyph, or show motion that does not correspond to work actually completing. A bar that moves while nothing happens is a lie.
 - **Don't** add emoji beyond the file browser's `📁`/`📄`, or a glyph whose meaning an existing one already carries.
 - **Don't** specify a font, font size, or line height. The terminal owns those, and assuming otherwise breaks the grid.
