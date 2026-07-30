@@ -1421,7 +1421,10 @@ const HELP_INDENT: usize = 2;
 /// Cells between the two columns in the wide layout.
 const HELP_COL_GAP: u16 = 3;
 /// Sections in the left column when the sheet is wide enough for two. `Viewer`
-/// alone balances against everything else (21 rows against 22).
+/// alone is the closest balance available (22 rows against 29) — it is one row
+/// longer than every other section put together, so moving any section left
+/// makes the split worse, not better. The columns scroll to their own ends
+/// rather than sharing one offset, so the imbalance costs nothing.
 const HELP_SPLIT: usize = 1;
 
 const HELP_SECTIONS: &[HelpSection] = &[
@@ -1627,8 +1630,20 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
                 Constraint::Min(0),
             ])
             .split(body_area);
-        frame.render_widget(Paragraph::new(body).scroll((offset, 0)), cols[0]);
-        frame.render_widget(Paragraph::new(right_body).scroll((offset, 0)), cols[2]);
+        // Each column stops at its own end. The scroll range is the taller
+        // column's, so applying that offset to both scrolled the shorter one
+        // past its content and left a ragged blank tail beside a column that
+        // was still going.
+        let col_offset = |len: usize| offset.min(len.saturating_sub(height) as u16);
+        let (left_len, right_len) = (body.len(), right_body.len());
+        frame.render_widget(
+            Paragraph::new(body).scroll((col_offset(left_len), 0)),
+            cols[0],
+        );
+        frame.render_widget(
+            Paragraph::new(right_body).scroll((col_offset(right_len), 0)),
+            cols[2],
+        );
     } else {
         frame.render_widget(Paragraph::new(body).scroll((offset, 0)), body_area);
     }
@@ -1744,6 +1759,39 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("Viewer") && r.contains("Scan & triage")),
             "narrow terminal must stay single-column"
+        );
+    }
+
+    /// The two columns are unequal (Viewer is 22 rows, the rest 29), and the
+    /// scroll range belongs to the taller one. Sharing a single offset scrolled
+    /// the shorter column past its own end, so reaching the last right-hand
+    /// section blanked the bottom of the left one.
+    #[test]
+    fn help_columns_scroll_to_their_own_ends() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+
+        // Wide enough for two columns, short enough to force scrolling.
+        let wide = 150;
+        let first = render_help_with(&mut app, wide, 30);
+        assert!(
+            first.iter().any(|r| r.contains("Scan & triage")),
+            "expected the two-column layout at {wide} cells"
+        );
+
+        app.help_scroll_to_end();
+        let end = render_help_with(&mut app, wide, 30);
+
+        // The right column reached its last section...
+        assert!(
+            end.iter().any(|r| r.contains("File browser")),
+            "the taller column did not reach its end"
+        );
+        // ...and the left column is still showing content, not blank tail. Its
+        // last row is the deepest Viewer binding, which must still be painted.
+        assert!(
+            end.iter().any(|r| r.contains("copy the current file path")),
+            "the shorter column scrolled past its own content"
         );
     }
 
