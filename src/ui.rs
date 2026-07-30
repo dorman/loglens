@@ -1052,6 +1052,8 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled("j/k", key(t)),
                 Span::styled(" move   ", dim(t)),
+                Span::styled("f/F", key(t)),
+                Span::styled(" filter   ", dim(t)),
                 Span::styled("Enter/click", key(t)),
                 Span::styled(" jump   ", dim(t)),
                 Span::styled("e", key(t)),
@@ -1168,7 +1170,8 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  s               reopen last findings panel (no rescan)"),
         Line::from("  p / P           next / previous finding (wraps; no panel)"),
         Line::from("  e               export findings (never overwrites an export)"),
-        Line::from("  (in panel)      j/k move · Enter jump · e export · q close"),
+        Line::from("  (in panel)      j/k move · f/F or ←/→ severity filter"),
+        Line::from("                  Enter jump · e export · q close"),
         Line::from(""),
         head("Search & filter"),
         Line::from("  /               search (Enter first · n/N walk)"),
