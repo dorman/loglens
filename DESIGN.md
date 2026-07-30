@@ -409,6 +409,6 @@ Vertically centered in the log pane: the gradient banner, the version, the line 
 - **Don't** size a surface to a percentage of the terminal when its content has a natural width. Truncated help, or a truncated live counter, is worse than a narrower panel.
 - **Don't** animate on a timer, spin a decorative glyph, or show motion that does not correspond to work actually completing. A bar that moves while nothing happens is a lie.
 - **Don't** add emoji beyond the file browser's `📁`/`📄`, or a glyph whose meaning an existing one already carries.
-- **Don't** let an overlay pass a click through to the surface underneath it. A panel that covers the log owns every click inside its own rect, whether or not the click landed on something actionable.
+- **Don't** let an overlay pass input through to the surface underneath it. A panel that covers the log owns every click inside its own rect, whether or not the click landed on something actionable — and it owns the keyboard for as long as it is open. Overlays are checked *before* the mode routing, never inside one mode's handler: help is reachable from the browser as well as the viewer, and while its keys lived in the viewer's handler alone, `q` on the help sheet quit the application instead of closing it.
 - **Don't** compute a row's layout in two places. The width formula and the row builder must come from one function, or the longest label eventually collides with the column beside it.
 - **Don't** specify a font, font size, or line height. The terminal owns those, and assuming otherwise breaks the grid.

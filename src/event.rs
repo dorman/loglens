@@ -25,6 +25,25 @@ fn key_is_actionable(kind: KeyEventKind) -> bool {
 }
 
 fn dispatch_key(app: &mut App, key: KeyEvent) {
+    // Overlays own the keyboard wherever they are open, so they are checked
+    // before the mode routing rather than inside one mode's handler.
+    //
+    // Help can be opened from the browser as well as the viewer, and while it
+    // only closed over the *viewer* its keys fell through to whatever mode was
+    // underneath: `j` moved the browser selection behind the sheet, `Enter`
+    // entered a directory or opened a file, and `q` — which the help footer
+    // advertises as "close" — quit the application outright.
+    //
+    // Order matches the paint order in `ui::draw`: help renders over settings,
+    // so help takes the keys first.
+    if app.show_help {
+        handle_help(app, key.code, key.modifiers);
+        return;
+    }
+    if app.show_settings {
+        handle_settings(app, key.code);
+        return;
+    }
     match app.mode {
         Mode::Input => handle_input(app, key.code),
         Mode::Browser => handle_browser(app, key.code),
@@ -281,43 +300,39 @@ fn handle_browser(app: &mut App, code: KeyCode) {
     }
 }
 
+fn handle_help(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    match code {
+        // Footer advertises q; treat it like ?/Esc so it closes the overlay
+        // instead of being swallowed with no effect.
+        KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => app.toggle_help(),
+        // The sheet is taller than most terminals, so it scrolls with the
+        // same keys the viewer uses.
+        KeyCode::Char('j') | KeyCode::Down => app.help_scroll_by(1),
+        KeyCode::Char('k') | KeyCode::Up => app.help_scroll_by(-1),
+        KeyCode::Char(' ') | KeyCode::PageDown => app.help_scroll_page(1),
+        KeyCode::PageUp => app.help_scroll_page(-1),
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.help_scroll_page(1),
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => app.help_scroll_page(-1),
+        KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
+        KeyCode::Char('G') | KeyCode::End => app.help_scroll_to_end(),
+        _ => {}
+    }
+}
+
+fn handle_settings(app: &mut App, code: KeyCode) {
+    match code {
+        // `,` closes what `,` opened, alongside the usual Esc/q.
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => app.toggle_settings(),
+        KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
+        // Enter is the footer's advertised key; Space matches the browser's
+        // "flip the thing under the cursor" binding.
+        KeyCode::Enter | KeyCode::Char(' ') => app.settings_activate(),
+        _ => {}
+    }
+}
+
 fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if app.show_help {
-        match code {
-            // Footer advertises q; treat it like ?/Esc so it closes the overlay
-            // instead of being swallowed with no effect.
-            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => app.toggle_help(),
-            // The sheet is taller than most terminals, so it scrolls with the
-            // same keys the viewer uses.
-            KeyCode::Char('j') | KeyCode::Down => app.help_scroll_by(1),
-            KeyCode::Char('k') | KeyCode::Up => app.help_scroll_by(-1),
-            KeyCode::Char(' ') | KeyCode::PageDown => app.help_scroll_page(1),
-            KeyCode::PageUp => app.help_scroll_page(-1),
-            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-                app.help_scroll_page(1)
-            }
-            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
-                app.help_scroll_page(-1)
-            }
-            KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
-            KeyCode::Char('G') | KeyCode::End => app.help_scroll_to_end(),
-            _ => {}
-        }
-        return;
-    }
-    if app.show_settings {
-        match code {
-            // `,` closes what `,` opened, alongside the usual Esc/q.
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => app.toggle_settings(),
-            KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
-            KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
-            // Enter is the footer's advertised key; Space matches the browser's
-            // "flip the thing under the cursor" binding.
-            KeyCode::Enter | KeyCode::Char(' ') => app.settings_activate(),
-            _ => {}
-        }
-        return;
-    }
     if app.show_findings {
         match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') | KeyCode::Char('s') => {
@@ -886,9 +901,12 @@ mod tests {
     #[test]
     fn help_q_closes_overlay_without_quitting() {
         let mut app = app_with_sample();
-        handle_viewer(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+        key(&mut app, '?');
         assert!(app.show_help);
-        handle_viewer(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
+        key(&mut app, 'q');
         assert!(!app.show_help);
         assert!(!app.should_quit);
     }
@@ -987,8 +1005,9 @@ mod tests {
         }
 
         let mut app = app_with_sample();
-        let press =
-            |app: &mut App, c: char| handle_viewer(app, KeyCode::Char(c), KeyModifiers::NONE);
+        let press = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
 
         press(&mut app, ',');
         assert!(app.show_settings);
@@ -1017,6 +1036,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Help can be opened from the browser as well as the viewer, but its key
+    /// handling used to live inside `handle_viewer`. Opened from the browser,
+    /// every key fell through to the browser behind the sheet: `j` moved the
+    /// selection invisibly, `Enter` entered a directory or opened a file, and
+    /// `q` — advertised by the help footer as "close" — quit the application.
+    #[test]
+    fn help_owns_the_keyboard_when_opened_from_the_browser() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.restore_browser_cwd(Some(std::path::PathBuf::from("samples/bundle")));
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+
+        key(&mut app, 'o');
+        assert_eq!(app.mode, Mode::Browser);
+        key(&mut app, '?');
+        assert!(app.show_help);
+
+        // `j` scrolls the sheet and leaves the browser alone. The scroll limit
+        // is a render-time fact, so stand in for a draw that produced a sheet
+        // taller than its viewport — otherwise every scroll clamps to 0.
+        app.help_clamp_scroll(60, 20);
+        let selected = app.browser.selected;
+        let cwd = app.browser.cwd.clone();
+        key(&mut app, 'j');
+        assert_eq!(app.help_scroll, 1, "`j` did not scroll the help sheet");
+        assert_eq!(
+            app.browser.selected, selected,
+            "`j` moved the browser selection behind the sheet"
+        );
+
+        // Enter must not navigate or open anything while help is up.
+        dispatch_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.browser.cwd, cwd, "Enter navigated behind the sheet");
+        assert!(app.files.is_empty(), "Enter opened a file behind the sheet");
+
+        // `q` closes the sheet and returns to the browser — it does not quit.
+        key(&mut app, 'q');
+        assert!(!app.show_help);
+        assert!(!app.should_quit, "`q` in help quit the application");
+        assert_eq!(app.mode, Mode::Browser, "closing help left the browser");
+
+        // The browser has its keys back.
+        key(&mut app, 'j');
+        assert_ne!(app.browser.selected, selected);
+    }
+
     /// Scanning on open means the findings panel is the *first* surface a user
     /// sees, so anything it swallows is effectively unreachable. `,` and `?`
     /// have to work from inside it.
@@ -1033,13 +1099,13 @@ mod tests {
         );
 
         let press = |app: &mut App, c: char| {
-            handle_viewer(app, KeyCode::Char(c), KeyModifiers::NONE);
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         };
 
         press(&mut app, ',');
         assert!(app.show_settings, "`,` did not reach settings");
         // Settings layers on top; Esc drops back to the findings list.
-        handle_viewer(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        dispatch_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(!app.show_settings);
         assert!(
             app.show_findings,
