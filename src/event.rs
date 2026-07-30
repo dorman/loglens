@@ -25,6 +25,25 @@ fn key_is_actionable(kind: KeyEventKind) -> bool {
 }
 
 fn dispatch_key(app: &mut App, key: KeyEvent) {
+    // Overlays own the keyboard wherever they are open, so they are checked
+    // before the mode routing rather than inside one mode's handler.
+    //
+    // Help can be opened from the browser as well as the viewer, and while it
+    // only closed over the *viewer* its keys fell through to whatever mode was
+    // underneath: `j` moved the browser selection behind the sheet, `Enter`
+    // entered a directory or opened a file, and `q` — which the help footer
+    // advertises as "close" — quit the application outright.
+    //
+    // Order matches the paint order in `ui::draw`: help renders over settings,
+    // so help takes the keys first.
+    if app.show_help {
+        handle_help(app, key.code, key.modifiers);
+        return;
+    }
+    if app.show_settings {
+        handle_settings(app, key.code);
+        return;
+    }
     match app.mode {
         Mode::Input => handle_input(app, key.code),
         Mode::Browser => handle_browser(app, key.code),
@@ -109,7 +128,9 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::ScrollDown => {
-            if app.show_findings {
+            if app.show_settings {
+                app.settings_move(1);
+            } else if app.show_findings {
                 app.findings_move(3);
             } else if app.mode == Mode::Browser {
                 app.browser.move_selection(3);
@@ -118,7 +139,9 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::ScrollUp => {
-            if app.show_findings {
+            if app.show_settings {
+                app.settings_move(-1);
+            } else if app.show_findings {
                 app.findings_move(-3);
             } else if app.mode == Mode::Browser {
                 app.browser.move_selection(-3);
@@ -128,6 +151,19 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
         }
         MouseEventKind::Down(MouseButton::Left) => {
             app.status = None;
+            // The settings panel is on top, so it claims the click either way:
+            // a row toggles, anywhere else is absorbed rather than falling
+            // through to the log it is covering.
+            if app.show_settings {
+                if hit(r.settings_list, col, row) {
+                    let idx = (row - r.settings_list.y) as usize;
+                    if idx < crate::app::SETTINGS.len() {
+                        app.settings_sel = idx;
+                        app.settings_activate();
+                    }
+                }
+                return;
+            }
             if app.show_findings {
                 // Click a finding row to jump straight to it. Hit-test against
                 // the exact list rect (the popup also contains a severity bar
@@ -264,15 +300,39 @@ fn handle_browser(app: &mut App, code: KeyCode) {
     }
 }
 
-fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if app.show_help {
+fn handle_help(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    match code {
         // Footer advertises q; treat it like ?/Esc so it closes the overlay
         // instead of being swallowed with no effect.
-        if matches!(code, KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc) {
-            app.toggle_help();
-        }
-        return;
+        KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => app.toggle_help(),
+        // The sheet is taller than most terminals, so it scrolls with the
+        // same keys the viewer uses.
+        KeyCode::Char('j') | KeyCode::Down => app.help_scroll_by(1),
+        KeyCode::Char('k') | KeyCode::Up => app.help_scroll_by(-1),
+        KeyCode::Char(' ') | KeyCode::PageDown => app.help_scroll_page(1),
+        KeyCode::PageUp => app.help_scroll_page(-1),
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.help_scroll_page(1),
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => app.help_scroll_page(-1),
+        KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
+        KeyCode::Char('G') | KeyCode::End => app.help_scroll_to_end(),
+        _ => {}
     }
+}
+
+fn handle_settings(app: &mut App, code: KeyCode) {
+    match code {
+        // `,` closes what `,` opened, alongside the usual Esc/q.
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => app.toggle_settings(),
+        KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
+        // Enter is the footer's advertised key; Space matches the browser's
+        // "flip the thing under the cursor" binding.
+        KeyCode::Enter | KeyCode::Char(' ') => app.settings_activate(),
+        _ => {}
+    }
+}
+
+fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if app.show_findings {
         match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') | KeyCode::Char('s') => {
@@ -286,6 +346,12 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('P') => app.prev_finding(),
             KeyCode::Enter => app.findings_jump(),
             KeyCode::Char('e') => app.export_findings(),
+            // Both overlays are checked before this one, so they layer on top
+            // and Esc drops back to the findings list. Without these, scanning
+            // on open makes the findings panel the first thing a user sees and
+            // settings/help unreachable until they think to close it.
+            KeyCode::Char(',') => app.toggle_settings(),
+            KeyCode::Char('?') => app.toggle_help(),
             _ => {}
         }
         return;
@@ -375,6 +441,9 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('x') => app.remove_last_rule(),
         KeyCode::Char('i') => app.toggle_ignore_case(),
         KeyCode::Char('l') => app.toggle_legend(),
+        // The editor convention for preferences, and the panel that collects
+        // `i` / `l` and scan-on-open in one place.
+        KeyCode::Char(',') => app.toggle_settings(),
         KeyCode::Char('?') => app.toggle_help(),
         _ => {}
     }
@@ -387,6 +456,48 @@ mod tests {
 
     fn app_with_sample() -> App {
         App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap()
+    }
+
+    /// The route users actually take: welcome screen, `o` for the browser, mark a
+    /// file, `o` to open. The CLI path is covered in `app`; this covers the one
+    /// where the file is chosen interactively.
+    #[test]
+    fn opening_from_the_browser_starts_a_scan() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.restore_browser_cwd(Some(std::path::PathBuf::from("samples/bundle")));
+        app.enable_auto_scan();
+        assert!(!app.scanning(), "nothing is open yet, so nothing to scan");
+
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+
+        key(&mut app, 'o');
+        assert_eq!(app.mode, Mode::Browser);
+
+        // Walk past the parent entry to the first real file, mark it, open it.
+        for _ in 0..8 {
+            if !app
+                .browser
+                .selected_entry()
+                .map(|e| e.is_dir)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            key(&mut app, 'j');
+        }
+        key(&mut app, ' ');
+        key(&mut app, 'o');
+
+        assert!(app.has_files(), "the marked file should have opened");
+        assert_eq!(app.mode, Mode::Viewer);
+        assert!(
+            app.scanning(),
+            "opening from the browser must scan too, not just the CLI path"
+        );
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("scanning…"), "{status}");
     }
 
     #[test]
@@ -790,9 +901,12 @@ mod tests {
     #[test]
     fn help_q_closes_overlay_without_quitting() {
         let mut app = app_with_sample();
-        handle_viewer(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+        key(&mut app, '?');
         assert!(app.show_help);
-        handle_viewer(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
+        key(&mut app, 'q');
         assert!(!app.show_help);
         assert!(!app.should_quit);
     }
@@ -870,5 +984,181 @@ mod tests {
                 .unwrap_or("")
                 .contains("open a file before clearing bookmarks")
         );
+    }
+
+    #[test]
+    fn comma_opens_settings_and_the_panel_swallows_viewer_keys() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "loglens-settings-keys-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+
+        let mut app = app_with_sample();
+        let press = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+
+        press(&mut app, ',');
+        assert!(app.show_settings);
+
+        // `j` moves the settings cursor rather than the log cursor.
+        let log_pos = app.file().view_pos;
+        press(&mut app, 'j');
+        assert_eq!(app.settings_sel, 1);
+        assert_eq!(app.file().view_pos, log_pos, "the log must not scroll");
+
+        // Space toggles the row under the cursor (legend), not page-down.
+        let legend = app.show_legend;
+        press(&mut app, ' ');
+        assert_ne!(app.show_legend, legend);
+
+        // `,` closes what `,` opened.
+        press(&mut app, ',');
+        assert!(!app.show_settings);
+        // And the viewer has its keys back.
+        press(&mut app, 'j');
+        assert_ne!(app.file().view_pos, log_pos);
+
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Help can be opened from the browser as well as the viewer, but its key
+    /// handling used to live inside `handle_viewer`. Opened from the browser,
+    /// every key fell through to the browser behind the sheet: `j` moved the
+    /// selection invisibly, `Enter` entered a directory or opened a file, and
+    /// `q` — advertised by the help footer as "close" — quit the application.
+    #[test]
+    fn help_owns_the_keyboard_when_opened_from_the_browser() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.restore_browser_cwd(Some(std::path::PathBuf::from("samples/bundle")));
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+
+        key(&mut app, 'o');
+        assert_eq!(app.mode, Mode::Browser);
+        key(&mut app, '?');
+        assert!(app.show_help);
+
+        // `j` scrolls the sheet and leaves the browser alone. The scroll limit
+        // is a render-time fact, so stand in for a draw that produced a sheet
+        // taller than its viewport — otherwise every scroll clamps to 0.
+        app.help_clamp_scroll(60, 20);
+        let selected = app.browser.selected;
+        let cwd = app.browser.cwd.clone();
+        key(&mut app, 'j');
+        assert_eq!(app.help_scroll, 1, "`j` did not scroll the help sheet");
+        assert_eq!(
+            app.browser.selected, selected,
+            "`j` moved the browser selection behind the sheet"
+        );
+
+        // Enter must not navigate or open anything while help is up.
+        dispatch_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.browser.cwd, cwd, "Enter navigated behind the sheet");
+        assert!(app.files.is_empty(), "Enter opened a file behind the sheet");
+
+        // `q` closes the sheet and returns to the browser — it does not quit.
+        key(&mut app, 'q');
+        assert!(!app.show_help);
+        assert!(!app.should_quit, "`q` in help quit the application");
+        assert_eq!(app.mode, Mode::Browser, "closing help left the browser");
+
+        // The browser has its keys back.
+        key(&mut app, 'j');
+        assert_ne!(app.browser.selected, selected);
+    }
+
+    /// Scanning on open means the findings panel is the *first* surface a user
+    /// sees, so anything it swallows is effectively unreachable. `,` and `?`
+    /// have to work from inside it.
+    #[test]
+    fn settings_and_help_are_reachable_from_the_findings_panel() {
+        let mut app = App::new(&["samples/bundle".into()], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        while app.scanning() {
+            app.scan_step(4000);
+        }
+        assert!(
+            app.show_findings,
+            "this test is only meaningful if the scan opened the panel"
+        );
+
+        let press = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        };
+
+        press(&mut app, ',');
+        assert!(app.show_settings, "`,` did not reach settings");
+        // Settings layers on top; Esc drops back to the findings list.
+        dispatch_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.show_settings);
+        assert!(
+            app.show_findings,
+            "closing settings lost the findings panel"
+        );
+
+        press(&mut app, '?');
+        assert!(app.show_help, "`?` did not reach help");
+        press(&mut app, '?');
+        assert!(!app.show_help);
+        assert!(app.show_findings);
+    }
+
+    /// An overlay that lets clicks through to the surface it is covering moves
+    /// the log cursor out from under the reader while they are aiming at a row.
+    #[test]
+    fn settings_panel_absorbs_clicks_meant_for_the_log_behind_it() {
+        let mut app = app_with_sample();
+        app.regions.log = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 30,
+        };
+        app.regions.settings_list = Rect {
+            x: 20,
+            y: 10,
+            width: 40,
+            height: crate::app::SETTINGS.len() as u16,
+        };
+        app.show_settings = true;
+        let before = app.file().view_pos;
+
+        // A click inside the panel but off any row is swallowed.
+        let click = |app: &mut App, col: u16, row: u16| {
+            handle_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: col,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )
+        };
+        click(&mut app, 30, 20);
+        assert_eq!(app.file().view_pos, before, "click fell through to the log");
+        assert!(app.show_settings);
+
+        // A click on the second row selects and toggles that row.
+        let legend = app.show_legend;
+        click(&mut app, 30, 11);
+        assert_eq!(app.settings_sel, 1);
+        assert_ne!(app.show_legend, legend);
     }
 }

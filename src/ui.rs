@@ -5,12 +5,13 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
-    Wrap,
+    Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap,
 };
 use regex::Regex;
 
-use crate::app::{App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode};
+use crate::app::{
+    App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, SETTINGS, Setting, severity_tally,
+};
 use crate::rules::Rule;
 use crate::signatures::Severity;
 use crate::theme::{self, Theme};
@@ -27,6 +28,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.show_findings {
         draw_findings(frame, app, area);
     }
+    if app.show_settings {
+        draw_settings(frame, app, area);
+    }
     if app.show_help {
         draw_help(frame, app, area);
     }
@@ -37,16 +41,101 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_work_progress(
-    frame: &mut Frame,
-    theme: &Theme,
-    area: Rect,
-    title: &str,
+/// Cells reserved at the right of the work-bar row for `" 100%"`. Fixed, so the
+/// bar does not shift sideways as the number gains a digit.
+const PCT_FIELD: u16 = 5;
+
+/// Content-width floor for the progress overlay. Below this the bar is too
+/// coarse to read a severity mix off, so the panel keeps the width even when its
+/// text rows would fit in less.
+const PROGRESS_MIN_CONTENT: u16 = 44;
+
+/// The work bar: length is real progress, composition is the verdict so far.
+///
+/// `counts` is the severity mix found up to this point — the same stacked bar
+/// the findings panel shows, scaled to the scanned length, so the report is
+/// already half-read by the time it opens. `None` (or nothing found yet) fills
+/// in accent, which is the honest reading of "running, clean so far". `▌` marks
+/// the boundary between read and unread, `░` carries the remainder, and both
+/// vanish at 100% rather than implying more to come.
+fn work_bar(theme: &Theme, counts: Option<[usize; 5]>, frac: f64, width: u16) -> Line<'static> {
+    let frac = frac.clamp(0.0, 1.0);
+    let bar_width = width.saturating_sub(PCT_FIELD);
+    let filled = ((frac * bar_width as f64).round() as u16).min(bar_width);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let segments = counts
+        .map(|c| severity_segments(c, filled))
+        .unwrap_or_default();
+    if segments.is_empty() {
+        if filled > 0 {
+            spans.push(Span::styled(
+                "\u{2588}".repeat(filled as usize),
+                Style::default().fg(theme.accent),
+            ));
+        }
+    } else {
+        for (sev, seg) in segments {
+            spans.push(Span::styled(
+                "\u{2588}".repeat(seg),
+                Style::default().fg(sev.color()),
+            ));
+        }
+    }
+
+    let remaining = bar_width - filled;
+    if remaining > 0 {
+        spans.push(Span::styled(
+            "\u{258C}",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            "\u{2591}".repeat((remaining - 1) as usize),
+            Style::default().fg(theme.border),
+        ));
+    }
+
+    let pct = (frac * 100.0).round() as u16;
+    spans.push(Span::styled(
+        format!("{pct:>4}%"),
+        Style::default().fg(theme.text),
+    ));
+    Line::from(spans)
+}
+
+/// Everything the progress overlay differs on between a scan and a rescan.
+struct WorkProgress<'a> {
+    title: &'a str,
     frac: f64,
+    /// Severity mix found so far, or `None` for work with no verdict to paint.
+    counts: Option<[usize; 5]>,
     info: Line<'static>,
-    file_name: &str,
-) {
-    let rect = centered_rect_lines(area, 56, 6);
+    file_name: String,
+}
+
+fn draw_work_progress(frame: &mut Frame, theme: &Theme, area: Rect, work: WorkProgress<'_>) {
+    let WorkProgress {
+        title,
+        frac,
+        counts,
+        info,
+        file_name,
+    } = work;
+
+    let sub = Line::from(vec![
+        Span::styled(format!(" {file_name}"), dim(theme)),
+        Span::styled("      Esc to cancel", dim(theme)),
+    ]);
+
+    // Sized to its own rows, not to a share of the terminal: a live counter that
+    // truncates mid-number is worse than a narrower panel.
+    let content = PROGRESS_MIN_CONTENT
+        .max(info.width() as u16 + 1)
+        .max(sub.width() as u16 + 1)
+        .max(title.chars().count() as u16 + 2);
+    let rect = centered_rect_cells(area, content.saturating_add(2), 5);
     let block = theme.panel(title, true);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
@@ -61,18 +150,11 @@ fn draw_work_progress(
         ])
         .split(inner);
 
-    let pct = (frac * 100.0).round() as u16;
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(theme.accent).bg(theme.cursor_bg))
-        .ratio(frac.clamp(0.0, 1.0))
-        .label(format!("{pct}%"));
-    frame.render_widget(gauge, rows[0]);
+    frame.render_widget(
+        Paragraph::new(work_bar(theme, counts, frac, rows[0].width)),
+        rows[0],
+    );
     frame.render_widget(Paragraph::new(info), rows[1]);
-
-    let sub = Line::from(vec![
-        Span::styled(format!(" {file_name}"), dim(theme)),
-        Span::styled("      Esc to cancel", dim(theme)),
-    ]);
     frame.render_widget(Paragraph::new(sub), rows[2]);
 }
 
@@ -97,10 +179,13 @@ fn draw_scan_progress(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         t,
         area,
-        " Scanning for known-bad signatures… ",
-        frac,
-        info,
-        &file_name,
+        WorkProgress {
+            title: " Scanning for known-bad signatures… ",
+            frac,
+            counts: app.scan_severity_counts(),
+            info,
+            file_name,
+        },
     );
 }
 
@@ -125,20 +210,186 @@ fn draw_rescan_progress(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         t,
         area,
-        " Updating highlights… ",
-        frac,
-        info,
-        &file_name,
+        WorkProgress {
+            title: " Updating highlights… ",
+            frac,
+            // A rescan has no verdict to paint — same component, one less dimension.
+            counts: None,
+            info,
+            file_name,
+        },
     );
 }
 
-/// A one-line stacked bar depicting the severity mix of the findings.
-fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
+/// Inlaid title of the settings panel.
+const TITLE: &str = " Settings ";
+/// Leading indent on a settings row, before the `▸` marker.
+const SETTING_INDENT: usize = 2;
+/// `[ on]` / `[off]` — a fixed field, so the values form a column.
+const SETTING_VALUE_COL: usize = 5;
+/// Cells between the key hint and the value.
+const SETTING_GAP: usize = 3;
+
+/// Cells a settings row needs before its value column would crowd its label.
+///
+/// The list width is the max of this over every row, and `setting_row` lays out
+/// against that same number — deriving both from one place is what keeps the
+/// longest label from colliding with the key column.
+fn setting_row_width(setting: Setting) -> usize {
+    let key = setting.key_hint().unwrap_or(" ").chars().count();
+    SETTING_INDENT
+        + 2
+        + setting.label().chars().count()
+        + SETTING_GAP
+        + key
+        + SETTING_GAP
+        + SETTING_VALUE_COL
+        + 1
+}
+
+/// One settings row: `▸ Label            i   [ on]`.
+///
+/// `column_width` is the width of the *list*, not of the panel: the value column
+/// is pinned to the widest row rather than to the panel's right edge, so a long
+/// explanation underneath can widen the panel without stranding the values out
+/// on the far side of it.
+fn setting_row(
+    t: &Theme,
+    setting: Setting,
+    on: bool,
+    selected: bool,
+    column_width: u16,
+) -> Line<'static> {
+    let marker = if selected { "\u{25B8} " } else { "  " };
+    let left = format!(
+        "{:indent$}{marker}{}",
+        "",
+        setting.label(),
+        indent = SETTING_INDENT
+    );
+
+    // The key that also does this, so the panel teaches its own shortcut.
+    let key = setting.key_hint().unwrap_or(" ");
+    let value = if on { "[ on]" } else { "[off]" };
+    let right_width = key.chars().count() + SETTING_GAP + SETTING_VALUE_COL + 1;
+    let filler = (column_width as usize).saturating_sub(left.chars().count() + right_width);
+
+    Line::from(vec![
+        Span::styled(left, Style::default().fg(t.text)),
+        Span::raw(" ".repeat(filler)),
+        Span::styled(key.to_string(), Style::default().fg(t.accent)),
+        Span::raw(" ".repeat(SETTING_GAP)),
+        Span::styled(
+            value.to_string(),
+            // On is the product doing something, so it carries the accent; off
+            // recedes with a dimmer color rather than an attribute.
+            if on {
+                Style::default().fg(t.accent)
+            } else {
+                dim(t)
+            },
+        ),
+    ])
+}
+
+fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
+    let sel = app.settings_sel.min(SETTINGS.len() - 1);
+    let detail = SETTINGS[sel].detail();
+    let footer = Line::from(vec![
+        Span::styled("  j/k", Style::default().fg(t.accent)),
+        Span::styled(" move   ", dim(t)),
+        Span::styled("Enter", Style::default().fg(t.accent)),
+        Span::styled(" toggle   ", dim(t)),
+        Span::styled("Esc", Style::default().fg(t.accent)),
+        Span::styled(" close", dim(t)),
+    ]);
+
+    // Sized to its own rows, like the progress overlay and the help sheet: a
+    // setting whose explanation wraps mid-word is worse than a wider panel.
+    let widest_row = SETTINGS
+        .iter()
+        .map(|s| setting_row_width(*s))
+        .max()
+        .unwrap_or(0);
+    // +1 so the longest explanation never sits flush against the border.
+    let widest_detail = SETTINGS
+        .iter()
+        .map(|s| SETTING_INDENT + s.detail().chars().count() + 1)
+        .max()
+        .unwrap_or(0);
+    let content = widest_row
+        .max(widest_detail)
+        .max(footer.width())
+        .max(TITLE.chars().count() + 2) as u16;
+
+    let rows_tall = SETTINGS.len() as u16;
+    // pad · rows · pad · detail · pad · footer
+    let rect = centered_rect_cells(area, content.saturating_add(2), rows_tall + 7);
+    let block = t.panel(TITLE, true);
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(rows_tall),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    app.regions.settings_list = parts[1];
+
+    for (i, setting) in SETTINGS.iter().enumerate() {
+        let row = Rect {
+            y: parts[1].y + i as u16,
+            height: 1,
+            ..parts[1]
+        };
+        let selected = i == sel;
+        let line = setting_row(
+            t,
+            *setting,
+            app.setting_value(*setting),
+            selected,
+            widest_row as u16,
+        );
+        let mut para = Paragraph::new(line);
+        if selected {
+            // Row wash marks the cursor row here exactly as it does in the log
+            // and the findings list; REVERSED stays reserved for the filter tabs.
+            para = para.style(Style::default().bg(t.cursor_bg));
+        }
+        frame.render_widget(para, row);
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("{:indent$}{detail}", "", indent = SETTING_INDENT),
+            dim(t),
+        ))),
+        parts[3],
+    );
+    frame.render_widget(Paragraph::new(footer), parts[5]);
+}
+
+/// Split `width` cells across the severity mix in `counts`, Critical → Info,
+/// left to right. Every present severity gets at least one cell so a lone
+/// Critical among a thousand Mediums cannot round away to nothing.
+///
+/// Shared by the findings panel's severity bar and the progress overlay's work
+/// bar: same proportions, same order, same one-cell floor — the second is the
+/// first scaled to however much of the corpus has been read.
+fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize)> {
     let total: usize = counts.iter().sum();
     if total == 0 || width == 0 {
-        return Line::from("");
+        return Vec::new();
     }
-    // Critical → Info, left to right.
     let order = [
         (Severity::Critical, 4usize),
         (Severity::High, 3),
@@ -148,7 +399,7 @@ fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
     ];
     let w = width as usize;
     let mut used = 0usize;
-    let mut spans = Vec::new();
+    let mut segments = Vec::new();
     for (sev, idx) in order {
         let c = counts[idx];
         if c == 0 {
@@ -162,12 +413,26 @@ fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
         if seg == 0 {
             break;
         }
-        spans.push(Span::styled(
-            "\u{2588}".repeat(seg),
-            Style::default().fg(sev.color()),
-        ));
+        segments.push((sev, seg));
         used += seg;
     }
+    // Rounding can leave the run a cell or two short of `width`. Give the
+    // shortfall to the last segment: in the work bar the run's *length* is the
+    // progress reading, so it has to land exactly where the head is.
+    if used < w
+        && let Some(last) = segments.last_mut()
+    {
+        last.1 += w - used;
+    }
+    segments
+}
+
+/// A one-line stacked bar depicting the severity mix of the findings.
+fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
+    let spans = severity_segments(counts, width)
+        .into_iter()
+        .map(|(sev, seg)| Span::styled("\u{2588}".repeat(seg), Style::default().fg(sev.color())))
+        .collect::<Vec<_>>();
     Line::from(spans)
 }
 
@@ -812,9 +1077,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
             style = style.fg(t.accent);
         }
         if marked {
-            style = style
-                .fg(t.palette[1 % t.palette.len()])
-                .add_modifier(Modifier::BOLD);
+            style = style.fg(t.marked).add_modifier(Modifier::BOLD);
         }
         if is_sel {
             style = Style::default()
@@ -834,10 +1097,7 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     // A directory read error takes over the footer row (rendering it inside
     // the list would shift entries and break mouse-click row mapping).
     let footer = if let Some(err) = &b.error {
-        Line::from(Span::styled(
-            err.clone(),
-            Style::default().fg(t.palette[0 % t.palette.len()]),
-        ))
+        Line::from(Span::styled(err.clone(), Style::default().fg(t.danger)))
     } else {
         Line::from(vec![
             Span::styled("Enter", key(t)),
@@ -891,21 +1151,25 @@ fn findings_filter_tabs(app: &App, counts: [usize; 5]) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Title for the findings popup: the finding count (with the raw hit count when
+/// grouping collapsed repeats) followed by one tally segment per reportable
+/// severity. The tally itself comes from [`severity_tally`] so the header cannot
+/// drift from the severities the filter tabs can select.
+fn findings_title(total: usize, hits: usize, counts: [usize; 5]) -> String {
+    let scale = if hits > total {
+        format!("{total} ({hits} hits)")
+    } else {
+        format!("{total}")
+    };
+    format!(" Scan findings — {scale}   {} ", severity_tally(counts))
+}
+
 fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     let popup = centered_rect(84, 84, area);
     app.regions.findings = popup;
 
     let c = app.severity_counts();
-    let hits = app.occurrence_count();
-    let scale = if hits > app.findings.len() {
-        format!("{} ({} hits)", app.findings.len(), hits)
-    } else {
-        format!("{}", app.findings.len())
-    };
-    let title = format!(
-        " Scan findings — {}   {} crit · {} high · {} med · {} low · {} info ",
-        scale, c[4], c[3], c[2], c[1], c[0],
-    );
+    let title = findings_title(app.findings.len(), app.occurrence_count(), c);
     let block = app.theme.panel(&title, true);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
@@ -1107,6 +1371,19 @@ fn centered_rect_lines(area: Rect, percent_x: u16, lines: u16) -> Rect {
     }
 }
 
+/// Centre a rect of an explicit cell size, clamped to `area`. Used where the
+/// content's own width decides the panel instead of a share of the terminal.
+fn centered_rect_cells(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1127,85 +1404,283 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let popup = centered_rect(66, 92, area);
-    let head = |s: &'static str| {
-        Line::from(Span::styled(
-            s,
+/// One keybinding: the key(s), then what they do. An empty key is a
+/// continuation of the row above it.
+type HelpRow = (&'static str, &'static str);
+
+struct HelpSection {
+    title: &'static str,
+    rows: &'static [HelpRow],
+}
+
+/// Cells reserved for the key column. The longest labels (`Shift-Tab / [`,
+/// `Ctrl-d/Ctrl-u`) are 13 cells, so 16 keeps the description column clear.
+const HELP_KEY_COL: usize = 16;
+/// Leading indent on every keybinding row.
+const HELP_INDENT: usize = 2;
+/// Cells between the two columns in the wide layout.
+const HELP_COL_GAP: u16 = 3;
+/// Sections in the left column when the sheet is wide enough for two. `Viewer`
+/// alone is the closest balance available (22 rows against 29) — it is one row
+/// longer than every other section put together, so moving any section left
+/// makes the split worse, not better. The columns scroll to their own ends
+/// rather than sharing one offset, so the imbalance costs nothing.
+const HELP_SPLIT: usize = 1;
+
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        title: "Viewer",
+        rows: &[
+            ("j/k, ↑/↓", "scroll one line   (or mouse wheel)"),
+            ("← / →", "pan left / right (long lines)"),
+            ("0", "reset horizontal scroll to column 1"),
+            ("Ctrl-d/Ctrl-u", "scroll one page"),
+            ("Space / PgDn", "page down"),
+            ("PgUp", "page up"),
+            ("g / G", "jump to top / bottom"),
+            ("Home / End", "jump to top / bottom"),
+            (":", "go to line number"),
+            ("m", "toggle bookmark on current line"),
+            ("M", "clear all bookmarks on this file"),
+            ("' / \"", "next / previous bookmark (wraps)"),
+            ("Enter", "jump to first match"),
+            ("n / N", "next / previous match (wraps)"),
+            ("Tab / ]", "next open file"),
+            ("Shift-Tab / [", "previous open file"),
+            ("click a tab", "switch open file"),
+            ("click a line", "move the cursor there"),
+            ("o / w", "open browser / close current file"),
+            ("y", "copy the cursor line to the clipboard"),
+            ("Y", "copy the current file path to the clipboard"),
+        ],
+    },
+    HelpSection {
+        title: "Scan & triage",
+        rows: &[
+            ("S", "scan for known-bad signatures, ranked"),
+            ("s", "reopen last findings panel (no rescan)"),
+            ("p / P", "next / previous finding (wraps; no panel)"),
+            ("e", "export findings (never overwrites an export)"),
+            ("(in panel)", "j/k move · f/F or ←/→ severity filter"),
+            ("", "Enter jump · e export · , settings · ? help · q close"),
+        ],
+    },
+    HelpSection {
+        title: "Search & filter",
+        rows: &[
+            ("/", "search (Enter first · n/N walk)"),
+            ("f", "filter: matching lines only (status if cursor hidden)"),
+            ("c", "clear search and filter together"),
+            ("Esc", "clear search → clear filter → quit"),
+        ],
+    },
+    HelpSection {
+        title: "Highlights",
+        rows: &[
+            ("a / r", "add keyword / regex highlight"),
+            ("click legend", "jump through that highlight's matches"),
+            ("x", "remove the last highlight"),
+            ("i / l", "toggle case-insensitive / legend (both persisted)"),
+        ],
+    },
+    HelpSection {
+        title: "Settings",
+        rows: &[
+            (",", "open settings (all prefs, persisted)"),
+            ("(in panel)", "j/k move · Enter toggle · Esc close"),
+        ],
+    },
+    HelpSection {
+        title: "File browser",
+        rows: &[
+            ("Enter / l", "enter directory / open file"),
+            ("Space  o", "mark a file / open marked"),
+            ("O", "open whole folder or .zip recursively"),
+            ("h / .", "parent dir / toggle hidden"),
+        ],
+    },
+];
+
+/// Render one keybinding row: the key in body text, its description recessed.
+///
+/// The key column is padded by *character* count, not byte length — several
+/// labels carry multi-byte arrows (`↑ ↓ ← →`), so byte padding would push their
+/// descriptions out of column.
+fn help_row(keys: &str, desc: &str, t: &Theme) -> Line<'static> {
+    let pad = HELP_KEY_COL.saturating_sub(keys.chars().count());
+    Line::from(vec![
+        Span::styled(
+            format!("{:indent$}{keys}", "", indent = HELP_INDENT),
+            Style::default().fg(t.text),
+        ),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(desc.to_string(), Style::default().fg(t.text_dim)),
+    ])
+}
+
+/// Widest rendered row across `sections`, in cells.
+fn help_section_width(sections: &[HelpSection]) -> usize {
+    sections
+        .iter()
+        .flat_map(|s| {
+            std::iter::once(s.title.chars().count()).chain(s.rows.iter().map(|(k, d)| {
+                HELP_INDENT + HELP_KEY_COL.max(k.chars().count()) + d.chars().count()
+            }))
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Lay out `sections` as titled blocks separated by a blank row.
+fn help_lines(sections: &[HelpSection], t: &Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (i, section) in sections.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            section.title,
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-        ))
+        )));
+        for (keys, desc) in section.rows {
+            lines.push(help_row(keys, desc, t));
+        }
+    }
+    lines
+}
+
+fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
+
+    // The sheet is sized to its own content rather than to a share of the
+    // terminal: a keybinding reference that truncates its descriptions is worse
+    // than one that scrolls. Two columns halve the row count but need both
+    // columns' width, so they engage only where that fits.
+    let (left, right) = HELP_SECTIONS.split_at(HELP_SPLIT);
+    let left_w = help_section_width(left);
+    let right_w = help_section_width(right);
+    const BORDERS: u16 = 2;
+    let two_col_w = (left_w + HELP_COL_GAP as usize + right_w) as u16 + BORDERS;
+    let two_col = area.width >= two_col_w;
+
+    let (body, want_w) = if two_col {
+        (help_lines(left, t), two_col_w)
+    } else {
+        (
+            help_lines(HELP_SECTIONS, t),
+            help_section_width(HELP_SECTIONS) as u16 + BORDERS,
+        )
     };
-    let text = vec![
-        Line::from(Span::styled(
-            "loglens — keybindings",
-            Style::default().fg(t.text).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        head("Viewer"),
-        Line::from("  j/k, ↑/↓        scroll one line   (or mouse wheel)"),
-        Line::from("  ← / →           pan left / right (long lines)"),
-        Line::from("  0               reset horizontal scroll to column 1"),
-        Line::from("  Ctrl-d/Ctrl-u   scroll one page"),
-        Line::from("  Space / PgDn    page down"),
-        Line::from("  PgUp            page up"),
-        Line::from("  g / G           jump to top / bottom"),
-        Line::from("  Home / End      jump to top / bottom"),
-        Line::from("  :               go to line number"),
-        Line::from("  m               toggle bookmark on current line"),
-        Line::from("  M               clear all bookmarks on this file"),
-        Line::from("  ' / \"           next / previous bookmark (wraps)"),
-        Line::from("  Enter           jump to first match"),
-        Line::from("  n / N           next / previous match (wraps)"),
-        Line::from("  Tab / ]         next open file"),
-        Line::from("  Shift-Tab / [   previous open file"),
-        Line::from("  click a tab     switch open file"),
-        Line::from("  click a line    move the cursor there"),
-        Line::from("  o / w           open browser / close current file"),
-        Line::from("  y               copy the cursor line to the clipboard"),
-        Line::from("  Y               copy the current file path to the clipboard"),
-        Line::from(""),
-        head("Scan & triage"),
-        Line::from("  S               scan for known-bad signatures, ranked"),
-        Line::from("  s               reopen last findings panel (no rescan)"),
-        Line::from("  p / P           next / previous finding (wraps; no panel)"),
-        Line::from("  e               export findings (never overwrites an export)"),
-        Line::from("  (in panel)      j/k move · f/F or ←/→ severity filter"),
-        Line::from("                  Enter jump · e export · q close"),
-        Line::from(""),
-        head("Search & filter"),
-        Line::from("  /               search (Enter first · n/N walk)"),
-        Line::from("  f               filter: matching lines only (status if cursor hidden)"),
-        Line::from("  c               clear search and filter together"),
-        Line::from("  Esc             clear search → clear filter → quit"),
-        Line::from(""),
-        head("Highlights"),
-        Line::from("  a / r           add keyword / regex highlight"),
-        Line::from("  click legend    jump through that highlight's matches"),
-        Line::from("  x               remove the last highlight"),
-        Line::from("  i / l           toggle case-insensitive / legend (both persisted)"),
-        Line::from(""),
-        head("File browser"),
-        Line::from("  Enter / l       enter directory / open file"),
-        Line::from("  Space  o        mark a file / open marked"),
-        Line::from("  O               open whole folder or .zip recursively"),
-        Line::from("  h / .           parent dir / toggle hidden"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  ?/q/Esc close help",
-            Style::default().fg(t.text_dim),
-        )),
-    ];
+    let right_body = if two_col {
+        help_lines(right, t)
+    } else {
+        Vec::new()
+    };
+    let rows = body.len().max(right_body.len());
+
+    // Header (title + rule) and footer are pinned; only the columns scroll.
+    const CHROME: u16 = BORDERS + 2 /* header */ + 1 /* footer */;
+    let want_h = rows as u16 + CHROME;
+    let popup = centered_rect_cells(
+        area,
+        want_w.min(area.width),
+        want_h.min(area.height * 92 / 100),
+    );
+
     let block = t
         .panel(" Help (?/q/Esc to close) ", true)
         .title_alignment(Alignment::Center);
+    let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let (head_area, body_area, foot_area) = (parts[0], parts[1], parts[2]);
+
     frame.render_widget(
-        Paragraph::new(text)
-            .style(Style::default().fg(t.text))
-            .block(block),
-        popup,
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "loglens — keybindings",
+                Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ]),
+        head_area,
     );
+
+    // Scroll state lives on App so a resize cannot strand the view past the end.
+    let height = body_area.height as usize;
+    app.help_clamp_scroll(rows, height);
+    let offset = app.help_scroll as u16;
+    let t = &app.theme;
+
+    if two_col {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(left_w as u16),
+                Constraint::Length(HELP_COL_GAP),
+                Constraint::Min(0),
+            ])
+            .split(body_area);
+        // Each column stops at its own end. The scroll range is the taller
+        // column's, so applying that offset to both scrolled the shorter one
+        // past its content and left a ragged blank tail beside a column that
+        // was still going.
+        let col_offset = |len: usize| offset.min(len.saturating_sub(height) as u16);
+        let (left_len, right_len) = (body.len(), right_body.len());
+        frame.render_widget(
+            Paragraph::new(body).scroll((col_offset(left_len), 0)),
+            cols[0],
+        );
+        frame.render_widget(
+            Paragraph::new(right_body).scroll((col_offset(right_len), 0)),
+            cols[2],
+        );
+    } else {
+        frame.render_widget(Paragraph::new(body).scroll((offset, 0)), body_area);
+    }
+
+    // Same scrollbar the log pane uses, and only when it carries information.
+    // It rides the popup's right border rather than the body area, so it never
+    // paints over a description.
+    if rows > height {
+        let mut sb_state = ScrollbarState::new(rows).position(app.help_scroll);
+        let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::default().fg(t.accent))
+            .track_style(Style::default().fg(t.border));
+        let sb_area = Rect {
+            x: popup.x,
+            y: body_area.y,
+            width: popup.width,
+            height: body_area.height,
+        };
+        frame.render_stateful_widget(sb, sb_area, &mut sb_state);
+    }
+
+    let footer = if rows > height {
+        Line::from(vec![
+            Span::styled("j/k", key(t)),
+            Span::styled(" scroll   ", dim(t)),
+            Span::styled("?/q/Esc", key(t)),
+            Span::styled(" close help", dim(t)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("?/q/Esc", key(t)),
+            Span::styled(" close help", dim(t)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(footer), foot_area);
 }
 
 #[cfg(test)]
@@ -1213,6 +1688,154 @@ mod tests {
     use super::*;
     use crate::rules;
     use crate::theme::Theme;
+
+    /// Render the help sheet into an off-screen terminal and return it row by
+    /// row, so the assertions below check painted cells rather than intent.
+    fn render_help_with(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_help(f, app, area);
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn render_help(width: u16, height: u16) -> Vec<String> {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+        render_help_with(&mut app, width, height)
+    }
+
+    /// Display column of `needle`, counting characters rather than bytes so the
+    /// arrow glyphs earlier in a row do not skew the answer.
+    fn column_of(row: &str, needle: &str) -> usize {
+        let byte = row
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing {needle:?}"));
+        row[..byte].chars().count()
+    }
+
+    /// The key column is padded by character count. Byte padding would push the
+    /// descriptions of arrow rows (`↑ ↓ ← →` are 3 bytes each) out of column.
+    #[test]
+    fn help_key_column_aligns_across_multibyte_keys() {
+        let rows = render_help(100, 60);
+        let find = |needle: &str| {
+            rows.iter()
+                .find(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("missing row {needle:?}"))
+        };
+        let arrows = column_of(find("j/k, ↑/↓"), "scroll one line");
+        let ascii = column_of(find("Ctrl-d/Ctrl-u"), "scroll one page");
+        let short = column_of(find("  0  "), "reset horizontal scroll");
+        assert_eq!(arrows, ascii, "multi-byte keys must not shift the column");
+        assert_eq!(ascii, short, "short keys must pad to the same column");
+    }
+
+    #[test]
+    fn help_sheet_uses_two_columns_only_when_the_terminal_can_hold_them() {
+        // 160 cells: the second column fits, so a left row and the first
+        // right-hand section land on the same painted line.
+        let wide = render_help(160, 50);
+        assert!(
+            wide.iter()
+                .any(|r| r.contains("Viewer") && r.contains("Scan & triage")),
+            "wide terminal should reflow into two columns"
+        );
+        // 100 cells: not enough width, so the sheet stays single-column.
+        let narrow = render_help(100, 60);
+        assert!(
+            !narrow
+                .iter()
+                .any(|r| r.contains("Viewer") && r.contains("Scan & triage")),
+            "narrow terminal must stay single-column"
+        );
+    }
+
+    /// The two columns are unequal (Viewer is 22 rows, the rest 29), and the
+    /// scroll range belongs to the taller one. Sharing a single offset scrolled
+    /// the shorter column past its own end, so reaching the last right-hand
+    /// section blanked the bottom of the left one.
+    #[test]
+    fn help_columns_scroll_to_their_own_ends() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+
+        // Wide enough for two columns, short enough to force scrolling.
+        let wide = 150;
+        let first = render_help_with(&mut app, wide, 30);
+        assert!(
+            first.iter().any(|r| r.contains("Scan & triage")),
+            "expected the two-column layout at {wide} cells"
+        );
+
+        app.help_scroll_to_end();
+        let end = render_help_with(&mut app, wide, 30);
+
+        // The right column reached its last section...
+        assert!(
+            end.iter().any(|r| r.contains("File browser")),
+            "the taller column did not reach its end"
+        );
+        // ...and the left column is still showing content, not blank tail. Its
+        // last row is the deepest Viewer binding, which must still be painted.
+        assert!(
+            end.iter().any(|r| r.contains("copy the current file path")),
+            "the shorter column scrolled past its own content"
+        );
+    }
+
+    /// The reported defect: at 48 rows the sheet needs a 55-row terminal, so on
+    /// anything shorter the tail used to be unreachable with no cue.
+    #[test]
+    fn help_sheet_tail_is_reachable_on_a_short_terminal() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.show_help = true;
+
+        let first = render_help_with(&mut app, 80, 24);
+        assert!(
+            !first.iter().any(|r| r.contains("File browser")),
+            "an 80x24 terminal cannot show the whole sheet at once"
+        );
+        let footer = first
+            .iter()
+            .find(|r| r.contains("close help"))
+            .expect("footer");
+        assert!(
+            footer.contains("j/k"),
+            "an overflowing sheet must advertise how to scroll: {footer:?}"
+        );
+
+        app.help_scroll_to_end();
+        let scrolled = render_help_with(&mut app, 80, 24);
+        assert!(
+            scrolled.iter().any(|r| r.contains("File browser")),
+            "the last section must be reachable by scrolling"
+        );
+    }
+
+    #[test]
+    fn help_sheet_hides_the_scroll_hint_when_everything_fits() {
+        let rows = render_help(160, 50);
+        let footer = rows
+            .iter()
+            .find(|r| r.contains("close help"))
+            .expect("footer");
+        assert!(
+            !footer.contains("j/k"),
+            "a sheet that fits should not advertise scrolling: {footer:?}"
+        );
+    }
 
     #[test]
     fn h_scroll_byte_offset_respects_unicode() {
@@ -1256,6 +1879,26 @@ mod tests {
         assert_eq!(partial[0].end, 5);
     }
 
+    /// Regression guard: the header used to spell out all five severities, so it
+    /// permanently read `… · 0 low · 0 info` even though `MIN_FINDING_SEVERITY`
+    /// keeps anything below Medium out of the findings list.
+    #[test]
+    fn findings_title_omits_severities_the_list_cannot_hold() {
+        // counts are indexed by `Severity as usize`: info, low, medium, high, crit.
+        let title = findings_title(12, 12, [7, 9, 4, 5, 3]);
+        assert_eq!(title, " Scan findings — 12   3 crit · 5 high · 4 med ");
+        assert!(!title.contains("low"), "{title}");
+        assert!(!title.contains("info"), "{title}");
+    }
+
+    #[test]
+    fn findings_title_shows_hit_count_only_when_grouping_collapsed_repeats() {
+        // More hits than findings: grouping collapsed repeats, so say both.
+        assert!(findings_title(3, 900, [0, 0, 1, 1, 1]).contains("3 (900 hits)"));
+        // One hit per finding: the parenthetical would be noise.
+        assert!(!findings_title(3, 3, [0, 0, 1, 1, 1]).contains("hits"));
+    }
+
     #[test]
     fn severity_bar_handles_zero_width_and_sparse_counts() {
         let empty = severity_bar([0; 5], 0);
@@ -1265,6 +1908,170 @@ mod tests {
         let bar = severity_bar(counts, 10);
         assert!(bar.width() <= 10);
         assert!(!bar.spans.is_empty());
+    }
+
+    /// The longest label used to run straight into the key column, because the
+    /// width formula and the row builder computed the layout independently.
+    #[test]
+    fn settings_value_column_clears_the_longest_label() {
+        let t = Theme::dark();
+        let width = SETTINGS
+            .iter()
+            .map(|s| setting_row_width(*s))
+            .max()
+            .unwrap_or(0) as u16;
+
+        for setting in SETTINGS {
+            let line = setting_row(&t, setting, true, false, width);
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.contains(setting.label()),
+                "row lost its label: {text:?}"
+            );
+            // Whatever the label's length, the value stays a distinct column.
+            let label_end = text.find(setting.label()).unwrap() + setting.label().len();
+            let tail = &text[label_end..];
+            assert!(
+                tail.starts_with("   "),
+                "label runs into the next column: {text:?}"
+            );
+            assert!(text.ends_with("[ on]"), "{text:?}");
+            assert!(line.width() <= width as usize, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn settings_row_shows_state_and_marks_only_the_selection() {
+        let t = Theme::dark();
+        let width = 44;
+
+        let on = setting_row(&t, Setting::ScanOnOpen, true, false, width);
+        let off = setting_row(&t, Setting::ScanOnOpen, false, false, width);
+        let on_text: String = on.spans.iter().map(|s| s.content.as_ref()).collect();
+        let off_text: String = off.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(on_text.contains("[ on]"), "{on_text:?}");
+        assert!(off_text.contains("[off]"), "{off_text:?}");
+
+        // The selected row is the only one wearing the marker.
+        let selected = setting_row(&t, Setting::IgnoreCase, false, true, width);
+        let plain = setting_row(&t, Setting::IgnoreCase, false, false, width);
+        let sel_text: String = selected.spans.iter().map(|s| s.content.as_ref()).collect();
+        let plain_text: String = plain.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(sel_text.contains('\u{25B8}'), "{sel_text:?}");
+        assert!(!plain_text.contains('\u{25B8}'), "{plain_text:?}");
+        // Marker and blank both take two cells, so the labels stay in column.
+        assert_eq!(selected.width(), plain.width());
+
+        // A setting with a keybinding advertises it; one without shows nothing.
+        assert!(sel_text.contains(" i   "), "{sel_text:?}");
+        let no_key: String = setting_row(&t, Setting::ScanOnOpen, false, false, width)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!no_key.contains('i'), "{no_key:?}");
+    }
+
+    /// The work bar reads its length as progress, so a rounding shortfall would
+    /// put the run and the `▌` head in different places.
+    #[test]
+    fn severity_segments_span_the_full_width() {
+        for counts in [[1, 0, 2, 0, 1], [0, 0, 0, 0, 1], [3, 3, 3, 3, 3]] {
+            for width in [1u16, 7, 10, 44, 137] {
+                let total: usize = severity_segments(counts, width).iter().map(|s| s.1).sum();
+                assert_eq!(total, width as usize, "counts {counts:?} at width {width}");
+            }
+        }
+        assert!(severity_segments([0; 5], 40).is_empty());
+        assert!(severity_segments([1, 0, 0, 0, 0], 0).is_empty());
+    }
+
+    /// Cells of `s` in `line`, and the color of the first cell that isn't track.
+    fn bar_parts(line: &Line<'static>) -> (usize, usize, usize, Option<ratatui::style::Color>) {
+        let mut filled = 0;
+        let mut head = 0;
+        let mut track = 0;
+        let mut lead = None;
+        for span in &line.spans {
+            for ch in span.content.chars() {
+                match ch {
+                    '\u{2588}' => {
+                        if lead.is_none() {
+                            lead = span.style.fg;
+                        }
+                        filled += 1;
+                    }
+                    '\u{258C}' => head += 1,
+                    '\u{2591}' => track += 1,
+                    _ => {}
+                }
+            }
+        }
+        (filled, head, track, lead)
+    }
+
+    #[test]
+    fn work_bar_reserves_a_fixed_percentage_field_and_length_tracks_progress() {
+        let t = Theme::dark();
+        for width in [PROGRESS_MIN_CONTENT, 60, 100] {
+            for (frac, pct) in [(0.0, "   0%"), (0.5, "  50%"), (1.0, " 100%")] {
+                let line = work_bar(&t, None, frac, width);
+                assert_eq!(line.width(), width as usize, "width {width} at {frac}");
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                assert!(text.ends_with(pct), "{text:?}");
+
+                // Bar cells (filled + head + track) always fill what's left.
+                let bar = (width - PCT_FIELD) as usize;
+                let (filled, head, track, _) = bar_parts(&line);
+                assert_eq!(filled + head + track, bar);
+                assert_eq!(filled, (frac * bar as f64).round() as usize);
+            }
+        }
+    }
+
+    #[test]
+    fn work_bar_paints_the_severity_mix_found_so_far() {
+        let t = Theme::dark();
+        // One Critical among Mediums still leads the bar — same order as the
+        // findings panel, so the reader recognises the shape when it opens.
+        let line = work_bar(&t, Some([0, 0, 6, 0, 1]), 0.5, 60);
+        let (_, _, _, lead) = bar_parts(&line);
+        assert_eq!(lead, Some(Severity::Critical.color()));
+
+        // Nothing found yet reads as "running, clean so far", not as empty.
+        let clean = work_bar(&t, Some([0; 5]), 0.5, 60);
+        let (filled, _, _, lead) = bar_parts(&clean);
+        assert_eq!(lead, Some(t.accent));
+        assert!(filled > 0);
+
+        // A rescan has no verdict, so it is the same single-accent bar.
+        let (rescan_filled, _, _, rescan_lead) = bar_parts(&work_bar(&t, None, 0.5, 60));
+        assert_eq!((rescan_filled, rescan_lead), (filled, Some(t.accent)));
+    }
+
+    #[test]
+    fn work_bar_drops_the_head_and_track_at_completion() {
+        let t = Theme::dark();
+        let running = work_bar(&t, None, 0.7, 60);
+        let (_, head, track, _) = bar_parts(&running);
+        assert_eq!(head, 1, "one boundary cell while work remains");
+        assert!(track > 0);
+
+        // Nothing left to read: neither glyph implies more to come.
+        let done = work_bar(&t, Some([0, 0, 1, 0, 0]), 1.0, 60);
+        let (filled, head, track, _) = bar_parts(&done);
+        assert_eq!((head, track), (0, 0));
+        assert_eq!(filled, (60 - PCT_FIELD) as usize);
+    }
+
+    /// A terminal narrower than the panel's floor must not panic or wrap.
+    #[test]
+    fn work_bar_survives_widths_below_the_percentage_field() {
+        let t = Theme::dark();
+        for width in 0..=PCT_FIELD + 2 {
+            let line = work_bar(&t, Some([0, 0, 1, 0, 1]), 0.5, width);
+            assert!(line.width() <= (width as usize).max(PCT_FIELD as usize));
+        }
     }
 
     #[test]

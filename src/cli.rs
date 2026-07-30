@@ -23,4 +23,9 @@ pub struct Cli {
     /// Match case-insensitively (applies to both keywords and regexes).
     #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
+
+    /// Don't scan for known-bad signatures on open. Useful when opening a large
+    /// bundle just to read one file; press `S` to scan when you want it.
+    #[arg(long = "no-scan")]
+    pub no_scan: bool,
 }

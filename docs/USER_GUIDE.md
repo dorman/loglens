@@ -17,11 +17,12 @@ This guide covers everything. For a 2-minute intro, see the
 4. [Scan: automatic triage](#scan-automatic-triage)
 5. [Highlights](#highlights)
 6. [Search & filter](#search--filter)
-7. [Mouse reference](#mouse-reference)
-8. [Keybinding reference](#keybinding-reference)
-9. [Command-line reference](#command-line-reference)
-10. [Limits & safety](#limits--safety)
-11. [Troubleshooting](#troubleshooting)
+7. [Settings](#settings)
+8. [Mouse reference](#mouse-reference)
+9. [Keybinding reference](#keybinding-reference)
+10. [Command-line reference](#command-line-reference)
+11. [Limits & safety](#limits--safety)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -80,8 +81,8 @@ separately when ready:
 ```sh
 git checkout master
 git pull
-git tag v0.0.1
-git push origin v0.0.1
+git tag v0.1.0
+git push origin v0.1.0
 # GitHub Actions attaches Linux/macOS/Windows archives to the release.
 # crates.io (optional, separate step — needs credentials):
 #   cargo publish
@@ -203,9 +204,23 @@ line.
 
 ## Scan: automatic triage
 
-Press **`S`**. loglens runs every open file through its built-in library of
-known-bad signatures — no keywords or setup required — and presents a
-**findings panel** ranked by severity.
+**A scan starts on its own.** Opening anything — a file from the command line,
+a selection from the browser, a folder or `.zip` — runs every open file through
+the built-in library of known-bad signatures and presents a **findings panel**
+ranked by severity. No keywords, no setup, no keystroke.
+
+While it runs, the progress bar is the report assembling: its length is real
+progress and its color is the severity mix found so far, so a bar that stays
+accent-blue means nothing has turned up yet. `Esc` cancels at any point.
+
+Press **`S`** to rescan (after adding highlights, or on files opened with
+`--no-scan`). Findings are global, so opening more files rescans the whole set
+and keeps one complete report. Pass `--no-scan` when you want to open a large
+bundle just to read it.
+
+When a scan finds nothing, no panel opens — the status line reports what was
+covered instead, e.g. `scan complete — nothing notable in 9004 lines across 3
+files`.
 
 What the library covers: security tampering (protection disabled), encoded
 PowerShell commands, process injection, commonly-abused system binaries
@@ -297,6 +312,36 @@ keyword colors.
 
 ---
 
+## Settings
+
+Press **`,`** to open the settings panel. It collects the preferences that
+persist between sessions:
+
+| Setting | Default | Also on |
+| ------- | ------- | ------- |
+| Ignore case in highlights | off | `i` |
+| Show highlight legend | on | `l` |
+| Scan on open | on | — |
+
+`j`/`k` move, `Enter` or `Space` toggles the selected row, and `,`/`q`/`Esc`
+closes. You can also click a row. Because a scan opens the findings panel on
+its own, `,` works from inside that panel too — settings layers on top, and
+`Esc` drops back to the findings list. Every change is written to
+`~/.config/loglens/config` immediately — there is no separate save step, and
+the status line confirms each write.
+
+Rows that also have a keybinding show it beside the value, so opening the panel
+once is how you stop needing to open it.
+
+**Scan on open** is the one setting without a shortcut. Turning it off means
+files open without being scanned, and `S` scans when you want it; turning it
+back on affects files you open from then on, not the ones already loaded. The
+`--no-scan` flag suppresses the launch scan for a single run without changing
+what is saved, so you can open one large bundle quietly and still have
+scan-on-open next time.
+
+---
+
 ## Mouse reference
 
 | Action | Result |
@@ -308,6 +353,7 @@ keyword colors.
 | Drag the scrollbar thumb | continuous scroll |
 | Click a highlight in the legend | jump through that rule's matches |
 | Click a row in the findings panel | jump to that finding's line |
+| Click a row in the settings panel | toggle that setting |
 | Click / wheel in the file browser | select entries |
 
 Pasting into the terminal is safe: pasted text is only ever inserted into the
@@ -328,7 +374,7 @@ top/bottom · `:` go to line · `m` bookmark · `M` clear bookmarks ·
 
 **Scan** — `S` scan · `s` reopen findings · `p`/`P` next/prev finding (wraps) ·
 `e` export markdown · in panel: `j`/`k` move, `Enter` jump, `e` export,
-`q`/`Esc` close
+`,` settings, `?` help, `q`/`Esc` close
 
 **Search & filter** — `/` search · `f` filter · `Enter` first match ·
 `n`/`N` walk matches (wraps) · `c` clear search+filter · `Esc` clear search →
@@ -336,6 +382,9 @@ clear filter → quit
 
 **Highlights** — `a` keyword · `r` regex · `x` remove last · `i` case (persisted) ·
 `l` legend
+
+**Settings** — `,` open · in panel: `j`/`k` move, `Enter` or `Space` toggle,
+`,`/`q`/`Esc` close
 
 **File browser** — `Enter`/`l` open/enter · `h` parent · `Space` mark ·
 `o` open marked · `O` open folder/zip · `.` hidden files · `q` close
@@ -354,16 +403,19 @@ loglens [OPTIONS] [FILES]...
 | `-k, --keyword <KEYWORD>` | literal keyword highlight; repeatable or comma-separated (`-k "timeout,rollback"`) |
 | `-r, --regex <PATTERN>` | regex highlight; repeatable |
 | `-i, --ignore-case` | case-insensitive matching for all rules (this session; also OR'd with the saved `i` preference) |
+| `--no-scan` | don't scan on open; press `S` when you want it |
 | `--version` | print version |
 | `--help` | print CLI help |
 
-Preferences: pressing `i` / `l` in the TUI writes `ignore_case` and
-`show_legend` (`true|false`) to `~/.config/loglens/config` (or
-`$XDG_CONFIG_HOME/loglens/config` / `%APPDATA%\loglens\config` on Windows).
-Navigating or leaving the file browser (`o`) also writes `browser_cwd` so the
-next launch reopens there when the path still exists. Override the directory
-with `LOGLENS_CONFIG_DIR`. The next launch restores those settings; `-i` still
-forces ignore-case on for the session.
+Preferences: the settings panel (`,`), and the `i` / `l` shortcuts, write
+`ignore_case`, `show_legend` and `scan_on_open` (`true|false`) to
+`~/.config/loglens/config` (or `$XDG_CONFIG_HOME/loglens/config` /
+`%APPDATA%\loglens\config` on Windows). Navigating or leaving the file browser
+(`o`) also writes `browser_cwd` so the next launch reopens there when the path
+still exists. Override the directory with `LOGLENS_CONFIG_DIR`. The next launch
+restores those settings; `-i` still forces ignore-case on for the session, and
+`--no-scan` suppresses the launch scan for one run without changing the saved
+`scan_on_open`.
 
 Example — open a bundle with a standing rule set:
 

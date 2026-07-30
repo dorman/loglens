@@ -20,9 +20,11 @@ logs) and need to spot trouble fast.
 
 ## Highlights
 
-- **One-key scan (`S`)** — zero-config detection of known-bad signals (encoded
-  PowerShell, cert failures, clock rollback, crashes, …), ranked by severity
-  with plain-English explanations and jump-to-line
+- **Scans on open** — zero-config detection of known-bad signals (encoded
+  PowerShell, cert failures, clock rollback, crashes, …) starts the moment a
+  file, folder, or bundle is opened, ranked by severity with plain-English
+  explanations and jump-to-line. The progress bar paints the severity mix as it
+  finds it; `S` rescans, `--no-scan` opts out
 - **Keyword & regex highlighting** — every tracked term gets its own color;
   add/remove live from inside the TUI
 - **Search & filter** — `/` to search, `f` to collapse a 10,000-line log down
@@ -33,6 +35,8 @@ logs) and need to spot trouble fast.
   before you add highlights
 - **Full mouse support** — wheel scroll, click-drag scrollbar, click a
   highlight to jump through its matches
+- **Settings (`,`)** — case-insensitive matching, the legend, and scan-on-open
+  in one panel; every change is saved for next time
 
 ## Quick start
 
@@ -64,16 +68,17 @@ once published. Do not tag or publish until testing is complete.
 
 ```sh
 loglens                      # opens the welcome screen — press o to browse
-loglens agent.log            # open one file
-loglens ./diag-bundle/       # open every log in a folder (recursive)
-loglens support-logs.zip     # open every log inside a zip
+loglens agent.log            # open one file and scan it
+loglens ./diag-bundle/       # open every log in a folder (recursive) and scan
+loglens support-logs.zip     # open every log inside a zip and scan
+loglens --no-scan big-bundle/ # open without scanning (press S when you want it)
 ```
 
 First moves once you're in:
 
 | Press | To |
 | ----- | -- |
-| `S`   | scan everything for known-bad signatures, ranked by severity |
+| `S`   | rescan everything for known-bad signatures (a scan already ran on open) |
 | `s`   | reopen the findings panel (no rescan) |
 | `p`/`P` | next / previous finding (no panel needed) |
 | `e`   | export findings to `loglens-findings.md` (numbered if it exists) |
@@ -85,13 +90,14 @@ First moves once you're in:
 | `←`/`→` | pan left / right across long lines (`0` resets) |
 | `y`   | copy the cursor line to the clipboard |
 | `Y`   | copy the current file path to the clipboard |
+| `,`   | settings (case-insensitive, legend, scan-on-open — persisted) |
 | `?`   | full keybinding help |
 | `q`   | quit |
 
 Try it on the included samples:
 
 ```sh
-loglens samples/bundle       # a fake AV diagnostic bundle — press S
+loglens samples/bundle       # a fake AV diagnostic bundle — scans as it opens
 ```
 
 ## Documentation

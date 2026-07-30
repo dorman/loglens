@@ -48,6 +48,81 @@ pub(crate) const FINDING_FILTERS: [Option<Severity>; 4] = [
     Some(Severity::Medium),
 ];
 
+/// One row of the settings panel (`,`).
+///
+/// Deliberately a closed enum rather than a list of closures over `&mut App`:
+/// every setting here is also reachable another way, and the enum makes the
+/// panel dispatch to those same toggles instead of reimplementing them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Setting {
+    IgnoreCase,
+    ShowLegend,
+    ScanOnOpen,
+}
+
+/// Settings in the order they are drawn and moved through.
+pub const SETTINGS: [Setting; 3] = [
+    Setting::IgnoreCase,
+    Setting::ShowLegend,
+    Setting::ScanOnOpen,
+];
+
+impl Setting {
+    pub fn label(self) -> &'static str {
+        match self {
+            Setting::IgnoreCase => "Ignore case in highlights",
+            Setting::ShowLegend => "Show highlight legend",
+            Setting::ScanOnOpen => "Scan on open",
+        }
+    }
+
+    /// One line on what the setting actually does, shown beneath the list for
+    /// the selected row — a label alone cannot say what `--no-scan` overrides.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Setting::IgnoreCase => "Keyword and regex highlights match regardless of case.",
+            Setting::ShowLegend => "Keep the highlight legend panel beside the log.",
+            Setting::ScanOnOpen => "Opening a file scans it without waiting for S.",
+        }
+    }
+
+    /// The viewer key that also toggles this, when one exists. The panel shows
+    /// it so a user who opens settings once learns the shortcut and stops
+    /// needing the panel.
+    pub fn key_hint(self) -> Option<&'static str> {
+        match self {
+            Setting::IgnoreCase => Some("i"),
+            Setting::ShowLegend => Some("l"),
+            // Only `,` and `--no-scan` reach this one; no viewer key to teach.
+            Setting::ScanOnOpen => None,
+        }
+    }
+}
+
+/// Render a per-severity tally as `3 crit · 5 high · 4 med`, indexed by
+/// `Severity as usize`.
+///
+/// Segments are derived from [`FINDING_FILTERS`] instead of being spelled out, so
+/// a tally can never advertise a severity the findings list is unable to hold:
+/// [`MIN_FINDING_SEVERITY`] keeps anything quieter out, which used to leave a
+/// permanent `0 low · 0 info` in both the findings panel title and the export
+/// header. Widening the filters widens every tally with them.
+pub(crate) fn severity_tally(counts: [usize; 5]) -> String {
+    FINDING_FILTERS
+        .iter()
+        .copied()
+        .flatten()
+        .map(|sev| {
+            format!(
+                "{} {}",
+                counts[sev as usize],
+                sev.label().to_ascii_lowercase()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Every hit of signature `sig` within file `file`, collapsed into one entry.
 ///
 /// A noisy log repeats the same condition on hundreds of lines. One finding per
@@ -138,6 +213,9 @@ pub struct Regions {
     pub findings_list: Rect,
     /// First visible finding index (for click mapping).
     pub findings_top: usize,
+    /// Exact rect of the settings rows (excludes the detail and footer lines),
+    /// so mouse clicks map 1:1 onto settings.
+    pub settings_list: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,12 +478,19 @@ pub struct Search {
 }
 
 pub struct App {
+    /// Scan on open, without waiting for `S`. Off until `enable_auto_scan` turns
+    /// it on, so constructing an App never kicks off background work by surprise.
+    auto_scan: bool,
     pub rules: Vec<Rule>,
     pub files: Vec<LogFile>,
     pub current: usize,
     pub mode: Mode,
     pub browser: Browser,
     pub ignore_case: bool,
+    /// Persisted preference: open a file and it scans itself. Distinct from
+    /// `auto_scan`, which is the armed/disarmed state for *this* run — `--no-scan`
+    /// suppresses the launch scan without rewriting what the user chose.
+    pub scan_on_open: bool,
 
     pub filter_on: bool,
     pub search: Option<Search>,
@@ -435,6 +520,15 @@ pub struct App {
 
     pub show_legend: bool,
     pub show_help: bool,
+    /// The settings overlay (`,`) and the row the cursor sits on.
+    pub show_settings: bool,
+    pub settings_sel: usize,
+    /// First visible row of the help sheet, plus the row counts the last frame
+    /// measured. Held here rather than derived at render time so the view holds
+    /// still while the sheet reflows.
+    pub help_scroll: usize,
+    help_rows: usize,
+    help_height: usize,
     pub viewport_height: usize,
     pub regions: Regions,
     /// True while the user is dragging the scrollbar thumb.
@@ -467,6 +561,7 @@ impl App {
             mode: Mode::Viewer,
             browser: Browser::new(start_dir),
             ignore_case,
+            scan_on_open: true,
             filter_on: false,
             search: None,
             active_rule: None,
@@ -480,8 +575,14 @@ impl App {
             rescan: None,
             input_kind: InputKind::Keyword,
             input_buffer: String::new(),
+            auto_scan: false,
             show_legend: true,
             show_help: false,
+            show_settings: false,
+            settings_sel: 0,
+            help_scroll: 0,
+            help_rows: 0,
+            help_height: 0,
             viewport_height: 20,
             regions: Regions::default(),
             scrollbar_drag: false,
@@ -583,6 +684,32 @@ impl App {
             (n, e, 0) => format!("opened {n}, {e} failed/skipped"),
             (n, e, t) => format!("opened {n}, {e} failed/skipped ({t} truncated)"),
         });
+        // Findings are global, so adding files rescans the corpus and keeps the
+        // report whole rather than reporting on a subset.
+        if self.auto_scan && opened > 0 {
+            self.scan_after_open();
+        }
+    }
+
+    /// Scan on open from here on, and scan whatever is already loaded.
+    ///
+    /// Separate from [`App::new`] so building an App is side-effect free — tests
+    /// and any non-interactive caller opt in explicitly.
+    pub fn enable_auto_scan(&mut self) {
+        self.auto_scan = true;
+        if self.has_files() {
+            self.scan_after_open();
+        }
+    }
+
+    /// Start a scan without discarding the open feedback that preceded it: the
+    /// reader still needs to know what was opened, and what failed.
+    fn scan_after_open(&mut self) {
+        let opened = self.status.take();
+        self.begin_scan();
+        if let Some(msg) = opened {
+            self.status = Some(format!("{msg} · scanning…"));
+        }
     }
 
     /// Open the marked files (or the selected file) from the browser.
@@ -1641,18 +1768,23 @@ impl App {
         } else {
             format!("{total} findings")
         };
+        // The tally lists only reportable severities; spelling all five out left a
+        // permanent "0 low, 0 info" here the way it used to in the panel title.
+        let tally = severity_tally(c);
         self.status = Some(if total == 0 {
-            "scan complete — nothing notable found".into()
+            // No panel opens on a clean scan, so the status line is the whole
+            // report: say what was covered, not just that nothing turned up.
+            let lines: usize = self.files.iter().map(|f| f.lines.len()).sum();
+            let files = self.files.len();
+            if files == 1 {
+                format!("scan complete — nothing notable in {lines} lines")
+            } else {
+                format!("scan complete — nothing notable in {lines} lines across {files} files")
+            }
         } else if capped {
-            format!(
-                "scan: {scale} (capped)  ({} crit, {} high, {} med, {} low, {} info)",
-                c[4], c[3], c[2], c[1], c[0]
-            )
+            format!("scan: {scale} (capped) · {tally}")
         } else {
-            format!(
-                "scan: {scale}  ({} crit, {} high, {} med, {} low, {} info)",
-                c[4], c[3], c[2], c[1], c[0]
-            )
+            format!("scan: {scale} · {tally}")
         });
     }
 
@@ -1694,6 +1826,20 @@ impl App {
                 .map(|f| f.name.clone())
                 .unwrap_or_default();
             (s.processed, s.total, s.findings.len(), name)
+        })
+    }
+
+    /// Severity mix of the *in-flight* scan, indexed like [`Self::severity_counts`].
+    /// The progress bar paints this, so the reader watches the verdict assemble
+    /// before the panel opens; `self.findings` is still the previous scan's (or
+    /// empty) until `finalize_scan` commits, so it cannot serve here.
+    pub fn scan_severity_counts(&self) -> Option<[usize; 5]> {
+        self.scan.as_ref().map(|s| {
+            let mut c = [0usize; 5];
+            for f in &s.findings {
+                c[self.signatures[f.sig].severity as usize] += 1;
+            }
+            c
         })
     }
 
@@ -1966,14 +2112,9 @@ impl App {
         out.push_str("# loglens scan findings\n\n");
         let hits = self.occurrence_count();
         out.push_str(&format!(
-            "{} findings · {} matching lines · {} crit · {} high · {} med · {} low · {} info\n\n",
+            "{} findings · {hits} matching lines · {}\n\n",
             self.findings.len(),
-            hits,
-            c[4],
-            c[3],
-            c[2],
-            c[1],
-            c[0]
+            severity_tally(c),
         ));
         for (i, f) in self.findings.iter().enumerate() {
             let sig = &self.signatures[f.sig];
@@ -2105,11 +2246,19 @@ impl App {
 
     /// Persist the browser's current working directory for the next launch.
     pub fn remember_browser_cwd(&self) {
-        let _ = crate::config::save(&crate::config::Config {
+        let _ = crate::config::save(&self.current_config());
+    }
+
+    /// Everything the app persists, gathered in one place. Both writers go
+    /// through this so adding a preference cannot silently reset another one by
+    /// being forgotten at a second construction site.
+    fn current_config(&self) -> crate::config::Config {
+        crate::config::Config {
             ignore_case: self.ignore_case,
             show_legend: self.show_legend,
+            scan_on_open: self.scan_on_open,
             browser_cwd: Some(self.browser.cwd.clone()),
-        });
+        }
     }
 
     pub fn toggle_legend(&mut self) {
@@ -2121,18 +2270,97 @@ impl App {
 
     /// Write current prefs to disk. Returns a short status suffix.
     fn persist_prefs(&self) -> String {
-        match crate::config::save(&crate::config::Config {
-            ignore_case: self.ignore_case,
-            show_legend: self.show_legend,
-            browser_cwd: Some(self.browser.cwd.clone()),
-        }) {
+        match crate::config::save(&self.current_config()) {
             Ok(()) => " · saved".to_string(),
             Err(_) => " · could not save pref".to_string(),
         }
     }
 
+    /// Turn scan-on-open on or off, for this run and for the next one.
+    ///
+    /// The preference drives `auto_scan` from here on, so turning it on arms
+    /// later opens and turning it off disarms them. It deliberately does not
+    /// scan what is already loaded: "scan whatever I open" is not a request to
+    /// scan right now — `S` is.
+    pub fn toggle_scan_on_open(&mut self) {
+        self.scan_on_open = !self.scan_on_open;
+        self.auto_scan = self.scan_on_open;
+        let state = if self.scan_on_open { "on" } else { "off" };
+        let persist = self.persist_prefs();
+        self.status = Some(format!("scan on open: {state}{persist}"));
+    }
+
+    pub fn toggle_settings(&mut self) {
+        self.show_settings = !self.show_settings;
+        // Reopening starts at the top, like the help sheet: this is a short list
+        // to look over, not a place the user left off.
+        if self.show_settings {
+            self.settings_sel = 0;
+        }
+    }
+
+    /// Move the settings cursor, clamped like the findings list.
+    pub fn settings_move(&mut self, delta: isize) {
+        let last = SETTINGS.len() as isize - 1;
+        self.settings_sel = (self.settings_sel as isize + delta).clamp(0, last) as usize;
+    }
+
+    /// Current value of a setting, for rendering its state.
+    pub fn setting_value(&self, setting: Setting) -> bool {
+        match setting {
+            Setting::IgnoreCase => self.ignore_case,
+            Setting::ShowLegend => self.show_legend,
+            Setting::ScanOnOpen => self.scan_on_open,
+        }
+    }
+
+    /// Flip the selected setting. Each arm reuses the same toggle the keybinding
+    /// calls, so the panel is a second door onto one behaviour rather than a
+    /// parallel implementation that can drift.
+    pub fn settings_activate(&mut self) {
+        match SETTINGS[self.settings_sel.min(SETTINGS.len() - 1)] {
+            Setting::IgnoreCase => self.toggle_ignore_case(),
+            Setting::ShowLegend => self.toggle_legend(),
+            Setting::ScanOnOpen => self.toggle_scan_on_open(),
+        }
+    }
+
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+        // Reopening starts at the top: the sheet is a reference, not a place the
+        // user left off.
+        self.help_scroll = 0;
+    }
+
+    /// Keep the help scroll inside the current sheet. Both arguments are
+    /// render-time facts (the sheet reflows between one and two columns), so the
+    /// clamp runs on every frame as well as on every keypress.
+    pub fn help_clamp_scroll(&mut self, rows: usize, height: usize) {
+        self.help_rows = rows;
+        self.help_height = height;
+        self.help_scroll = self.help_scroll.min(self.help_max_scroll());
+    }
+
+    fn help_max_scroll(&self) -> usize {
+        self.help_rows.saturating_sub(self.help_height)
+    }
+
+    /// Scroll the help sheet by `delta` rows, clamped at both ends. Help is a
+    /// reference sheet, so it does not wrap the way findings and matches do.
+    pub fn help_scroll_by(&mut self, delta: isize) {
+        let max = self.help_max_scroll();
+        let next = self.help_scroll as isize + delta;
+        self.help_scroll = next.clamp(0, max as isize) as usize;
+    }
+
+    /// One screenful, keeping a row of overlap so the reader keeps their place.
+    pub fn help_scroll_page(&mut self, dir: isize) {
+        let page = self.help_height.saturating_sub(1).max(1) as isize;
+        self.help_scroll_by(dir * page);
+    }
+
+    pub fn help_scroll_to_end(&mut self) {
+        self.help_scroll = self.help_max_scroll();
     }
 
     /// Absolute 1-based line number and text under the cursor, if any.
@@ -2209,6 +2437,170 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("loglens-{prefix}-{nonce}"))
+    }
+
+    #[test]
+    fn help_scroll_stays_inside_the_sheet() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.help_clamp_scroll(44, 20); // 44 rows of content in a 20-row body
+
+        app.help_scroll_by(1000);
+        assert_eq!(app.help_scroll, 24, "cannot scroll past the last row");
+        app.help_scroll_by(-1000);
+        assert_eq!(app.help_scroll, 0, "cannot scroll above the first row");
+
+        app.help_scroll_page(1);
+        assert_eq!(app.help_scroll, 19, "a page keeps one row of overlap");
+        app.help_scroll_to_end();
+        assert_eq!(app.help_scroll, 24);
+
+        // Reflowing to two columns shortens the sheet; the view must come back
+        // into range instead of being stranded past the end.
+        app.help_clamp_scroll(25, 25);
+        assert_eq!(app.help_scroll, 0);
+    }
+
+    #[test]
+    fn reopening_help_returns_to_the_top() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.toggle_help();
+        app.help_clamp_scroll(44, 20);
+        app.help_scroll_to_end();
+        assert_ne!(app.help_scroll, 0);
+        app.toggle_help(); // close
+        app.toggle_help(); // reopen
+        assert_eq!(
+            app.help_scroll, 0,
+            "help is a reference, not a resumed view"
+        );
+    }
+
+    /// The whole flow the way `main` runs it: open a bundle, arm the scan, let the
+    /// event loop advance it, and land on a report without a keystroke.
+    #[test]
+    fn opening_a_bundle_scans_it_and_opens_the_report() {
+        let mut app = app_with_paths(&["samples/bundle"]);
+        app.enable_auto_scan();
+        assert!(app.scanning(), "no keystroke should be needed to start");
+        assert!(
+            !app.show_findings,
+            "the report waits until the scan finishes"
+        );
+
+        let mut frames = 0;
+        while !app.scan_step(4000) {
+            frames += 1;
+            assert!(frames < 10_000, "scan did not finish");
+        }
+
+        assert!(
+            !app.findings.is_empty(),
+            "the sample bundle has known findings"
+        );
+        assert!(app.show_findings, "a scan with findings opens the report");
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.starts_with("scan: "), "{status}");
+        assert_eq!(
+            app.severity_counts().iter().sum::<usize>(),
+            app.findings.len()
+        );
+    }
+
+    #[test]
+    fn constructing_an_app_does_not_start_a_scan() {
+        // App::new stays side-effect free; only `enable_auto_scan` arms it.
+        let app = app_with_paths(&["samples/sample.log"]);
+        assert!(!app.scanning());
+        assert!(app.findings.is_empty());
+    }
+
+    #[test]
+    fn enabling_auto_scan_scans_the_already_open_files() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.enable_auto_scan();
+        assert!(
+            app.scanning(),
+            "the scan should be armed, not deferred to `S`"
+        );
+        // Open feedback survives: the reader still needs to know what loaded.
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("opened"), "{status}");
+        assert!(status.contains("scanning…"), "{status}");
+    }
+
+    #[test]
+    fn enabling_auto_scan_with_no_files_scans_nothing() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        assert!(!app.scanning());
+        // The welcome screen should stay clean rather than reporting on nothing.
+        assert!(app.status.is_none(), "{:?}", app.status);
+    }
+
+    #[test]
+    fn opening_more_files_rescans_once_auto_scan_is_on() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        assert!(!app.scanning());
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(
+            app.scanning(),
+            "findings are global, so adding a file must rescan the corpus"
+        );
+    }
+
+    #[test]
+    fn auto_scan_stays_off_when_it_was_never_enabled() {
+        // The `--no-scan` path: main simply never calls `enable_auto_scan`.
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(app.has_files());
+        assert!(!app.scanning());
+    }
+
+    #[test]
+    fn a_clean_scan_reports_what_it_covered() {
+        let path = tmp_name("clean.log");
+        fs::write(&path, "started up\nall good here\nstill fine\n").unwrap();
+        let mut app = app_with_paths(&[&path.to_string_lossy()]);
+        run_scan_to_completion(&mut app);
+        fs::remove_file(&path).ok();
+
+        assert!(app.findings.is_empty());
+        assert!(!app.show_findings, "a clean scan should not open a panel");
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("nothing notable"), "{status}");
+        assert!(
+            status.contains("3 lines"),
+            "an all-clear should say what it covered: {status}"
+        );
+    }
+
+    #[test]
+    fn a_scan_report_lists_only_reportable_severities() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.starts_with("scan: "), "{status}");
+        assert!(status.contains(" crit"), "{status}");
+        // The third instance of the always-zero counts used to live here.
+        assert!(!status.contains("low"), "{status}");
+        assert!(!status.contains("info"), "{status}");
+    }
+
+    #[test]
+    fn severity_tally_covers_exactly_the_selectable_filters() {
+        // counts are indexed by `Severity as usize`: info, low, medium, high, crit.
+        assert_eq!(severity_tally([7, 9, 4, 5, 3]), "3 crit · 5 high · 4 med");
+        // Zeroes are still listed — a reportable severity with no hits is
+        // information; a severity that cannot be reported at all is not.
+        assert_eq!(severity_tally([0; 5]), "0 crit · 0 high · 0 med");
+        // The tally and the filter tabs must stay derived from one source, so a
+        // future MIN_FINDING_SEVERITY change updates both at once.
+        assert_eq!(
+            severity_tally([1; 5]).split(" · ").count(),
+            FINDING_FILTERS.iter().flatten().count()
+        );
     }
 
     #[test]
@@ -3829,6 +4221,123 @@ mod tests {
         app.toggle_ignore_case();
         assert!(!app.ignore_case);
         assert!(!crate::config::load().ignore_case);
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_move_clamps_at_both_ends() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.settings_move(-1);
+        assert_eq!(app.settings_sel, 0, "k at the top stays put");
+        app.settings_move(1);
+        app.settings_move(1);
+        app.settings_move(1);
+        assert_eq!(
+            app.settings_sel,
+            SETTINGS.len() - 1,
+            "j past the end stays on the last row"
+        );
+    }
+
+    #[test]
+    fn toggle_settings_reopens_at_the_top() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.toggle_settings();
+        assert!(app.show_settings);
+        app.settings_move(2);
+        app.toggle_settings();
+        assert!(!app.show_settings);
+        app.toggle_settings();
+        assert_eq!(app.settings_sel, 0);
+    }
+
+    /// The panel must dispatch to the same toggles the keybindings call, not to
+    /// a parallel copy that can drift out of step with them.
+    #[test]
+    fn settings_activate_flips_the_selected_row() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tmp_name("settings-activate");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+
+        for (row, setting) in SETTINGS.iter().enumerate() {
+            app.settings_sel = row;
+            let before = app.setting_value(*setting);
+            app.settings_activate();
+            assert_ne!(
+                app.setting_value(*setting),
+                before,
+                "row {row} ({setting:?}) did not flip"
+            );
+        }
+
+        // Every flip went to disk, not just the last one.
+        let loaded = crate::config::load();
+        assert!(loaded.ignore_case);
+        assert!(!loaded.show_legend);
+        assert!(!loaded.scan_on_open);
+
+        unsafe {
+            std::env::remove_var("LOGLENS_CONFIG_DIR");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Turning the preference on arms *later* opens. It deliberately does not
+    /// scan what is already loaded — "scan whatever I open" is not "scan now".
+    #[test]
+    fn toggling_scan_on_open_arms_later_opens_without_scanning_now() {
+        let _guard = crate::config::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tmp_name("scan-on-open-pref");
+        fs::create_dir_all(&dir).unwrap();
+        // SAFETY: single-threaded under ENV_LOCK; restored before unlock.
+        unsafe {
+            std::env::set_var("LOGLENS_CONFIG_DIR", &dir);
+        }
+
+        // Start from the `--no-scan` shape: files open, nothing armed.
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.scan_on_open = false;
+        assert!(!app.scanning());
+
+        app.toggle_scan_on_open();
+        assert!(app.scan_on_open);
+        assert!(
+            !app.scanning(),
+            "arming the preference must not start a scan on already-open files"
+        );
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("scan on open: on"),
+            "{:?}",
+            app.status
+        );
+
+        // Armed: the next open scans.
+        app.open_resolved(&[PathBuf::from("samples/network.log")]);
+        assert!(app.scanning() || !app.findings.is_empty());
+
+        // Disarmed again: a later open does not.
+        app.cancel_scan();
+        app.toggle_scan_on_open();
+        assert!(!app.scan_on_open);
+        app.findings.clear();
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(!app.scanning());
+
         unsafe {
             std::env::remove_var("LOGLENS_CONFIG_DIR");
         }

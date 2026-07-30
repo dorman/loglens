@@ -52,7 +52,7 @@ restore terminal (panic hook also clears mouse/paste).
 | `theme.rs` | Dark palette + level-tint tokens; panel chrome (no theme cycling) |
 | `browser.rs` | In-TUI filesystem browser (mark / open / recursive `O`) |
 | `clipboard.rs` | OSC-52 yank helpers (`copy_text`) |
-| `config.rs` | Tiny `~/.config/loglens` prefs (ignore-case persistence) |
+| `config.rs` | Tiny `~/.config/loglens` prefs (ignore-case, legend, scan-on-open, browser cwd); edited in-app via the settings panel (`,`) |
 
 Hot paths worth knowing:
 - **Open** → `ingest::resolve` → `LogFile::load` / `rescan` → rebuild filtered view
@@ -66,5 +66,5 @@ code in `ingest.rs` / `app.rs` / `rules.rs` — prefer updating both together.
 ### Running the TUI (non-obvious)
 - `loglens` is a full-screen interactive TUI using crossterm raw mode + alternate screen and mouse capture. It requires a real TTY; it does not run headless. To demo it in cloud, run it inside a terminal emulator via computer use, not by piping stdin.
 - Useful sample data lives in `samples/` (`sample.log`, `big.log`, `network.log`, `bundle/`, `bundle.zip`).
-- Key first moves once open: `S` scan for known-bad signatures, `a` add keyword highlight, `/` search, `f` filter, `:` go to line, `m` bookmark (`M` clear), `←`/`→` pan long lines, `y`/`Y` yank line/path, `e` export findings, `?` help, `q` quit.
+- A scan starts automatically on open (`--no-scan` opts out); `S` rescans. Other first moves: `a` add keyword highlight, `/` search, `f` filter, `:` go to line, `m` bookmark (`M` clear), `←`/`→` pan long lines, `y`/`Y` yank line/path, `e` export findings, `,` settings, `?` help, `q` quit.
 - CLI-only smoke checks that work without a TTY: `loglens --version` and `loglens --help`.

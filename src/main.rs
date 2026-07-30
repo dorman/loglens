@@ -39,7 +39,15 @@ fn main() -> Result<()> {
     let rules = rules::build_rules(&cli, &theme, ignore_case)?;
     let mut app = App::new(&cli.files, rules, ignore_case)?;
     app.show_legend = prefs.show_legend;
+    app.scan_on_open = prefs.scan_on_open;
     app.restore_browser_cwd(prefs.browser_cwd);
+    // Scanning is the point of the tool, so it starts on its own: this scans the
+    // files just opened from the command line and arms every later open too.
+    // `--no-scan` suppresses it for this run without rewriting the preference,
+    // which the user can still flip from the settings panel (`,`).
+    if !cli.no_scan && app.scan_on_open {
+        app.enable_auto_scan();
+    }
 
     // ratatui::init() panics when stdout is not a TTY; fail with a clear message
     // instead so CI / pipes / non-interactive shells get a usable exit status.

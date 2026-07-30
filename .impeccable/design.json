@@ -1,0 +1,732 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-31T00:00:00Z",
+  "title": "Design System: loglens",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "tonalRamp": [
+          "oklch(15% 0.121 245.3)",
+          "oklch(26% 0.121 245.3)",
+          "oklch(37% 0.121 245.3)",
+          "oklch(48% 0.121 245.3)",
+          "oklch(59% 0.121 245.3)",
+          "oklch(70% 0.121 245.3)",
+          "oklch(82% 0.121 245.3)",
+          "oklch(95% 0.121 245.3)"
+        ],
+        "note": "The single accent. Focus, interactivity, selection, progress, and the latent Low severity step all share it."
+      },
+      "panel-graphite": {
+        "role": "neutral",
+        "displayName": "Panel Graphite",
+        "tonalRamp": [
+          "oklch(15% 0.031 268.4)",
+          "oklch(26% 0.031 268.4)",
+          "oklch(37% 0.031 268.4)",
+          "oklch(48% 0.031 268.4)",
+          "oklch(59% 0.031 268.4)",
+          "oklch(70% 0.031 268.4)",
+          "oklch(82% 0.031 268.4)",
+          "oklch(95% 0.031 268.4)"
+        ]
+      },
+      "paper-white": {
+        "role": "neutral",
+        "displayName": "Paper White",
+        "tonalRamp": [
+          "oklch(15% 0.016 266.3)",
+          "oklch(26% 0.016 266.3)",
+          "oklch(37% 0.016 266.3)",
+          "oklch(48% 0.016 266.3)",
+          "oklch(59% 0.016 266.3)",
+          "oklch(70% 0.016 266.3)",
+          "oklch(82% 0.016 266.3)",
+          "oklch(95% 0.016 266.3)"
+        ]
+      },
+      "slate-mute": {
+        "role": "neutral",
+        "displayName": "Slate Mute",
+        "tonalRamp": [
+          "oklch(15% 0.027 267.8)",
+          "oklch(26% 0.027 267.8)",
+          "oklch(37% 0.027 267.8)",
+          "oklch(48% 0.027 267.8)",
+          "oklch(59% 0.027 267.8)",
+          "oklch(70% 0.027 267.8)",
+          "oklch(82% 0.027 267.8)",
+          "oklch(95% 0.027 267.8)"
+        ],
+        "note": "Also the DEBUG/TRACE level tint and the latent Info severity step."
+      },
+      "gutter-steel": {
+        "role": "neutral",
+        "displayName": "Gutter Steel",
+        "tonalRamp": [
+          "oklch(15% 0.029 267.6)",
+          "oklch(26% 0.029 267.6)",
+          "oklch(37% 0.029 267.6)",
+          "oklch(48% 0.029 267.6)",
+          "oklch(59% 0.029 267.6)",
+          "oklch(70% 0.029 267.6)",
+          "oklch(82% 0.029 267.6)",
+          "oklch(95% 0.029 267.6)"
+        ]
+      },
+      "row-wash": {
+        "role": "neutral",
+        "displayName": "Row Wash",
+        "tonalRamp": [
+          "oklch(15% 0.023 264.2)",
+          "oklch(26% 0.023 264.2)",
+          "oklch(37% 0.023 264.2)",
+          "oklch(48% 0.023 264.2)",
+          "oklch(59% 0.023 264.2)",
+          "oklch(70% 0.023 264.2)",
+          "oklch(82% 0.023 264.2)",
+          "oklch(95% 0.023 264.2)"
+        ]
+      },
+      "status-trench": {
+        "role": "neutral",
+        "displayName": "Status Trench",
+        "tonalRamp": [
+          "oklch(15% 0.017 264.2)",
+          "oklch(26% 0.017 264.2)",
+          "oklch(37% 0.017 264.2)",
+          "oklch(48% 0.017 264.2)",
+          "oklch(59% 0.017 264.2)",
+          "oklch(70% 0.017 264.2)",
+          "oklch(82% 0.017 264.2)",
+          "oklch(95% 0.017 264.2)"
+        ]
+      },
+      "status-quartz": {
+        "role": "neutral",
+        "displayName": "Status Quartz",
+        "tonalRamp": [
+          "oklch(15% 0.020 263.0)",
+          "oklch(26% 0.020 263.0)",
+          "oklch(37% 0.020 263.0)",
+          "oklch(48% 0.020 263.0)",
+          "oklch(59% 0.020 263.0)",
+          "oklch(70% 0.020 263.0)",
+          "oklch(82% 0.020 263.0)",
+          "oklch(95% 0.020 263.0)"
+        ]
+      },
+      "ink-black": {
+        "role": "neutral",
+        "displayName": "Ink Black",
+        "tonalRamp": [
+          "oklch(15% 0.010 268.2)",
+          "oklch(26% 0.010 268.2)",
+          "oklch(37% 0.010 268.2)",
+          "oklch(48% 0.010 268.2)",
+          "oklch(59% 0.010 268.2)",
+          "oklch(70% 0.010 268.2)",
+          "oklch(82% 0.010 268.2)",
+          "oklch(95% 0.010 268.2)"
+        ],
+        "note": "Text color for every filled surface. Never used as a background."
+      },
+      "search-magnesium": {
+        "role": "neutral",
+        "displayName": "Search Magnesium",
+        "tonalRamp": [
+          "oklch(15% 0.000 89.9)",
+          "oklch(26% 0.000 89.9)",
+          "oklch(37% 0.000 89.9)",
+          "oklch(48% 0.000 89.9)",
+          "oklch(59% 0.000 89.9)",
+          "oklch(70% 0.000 89.9)",
+          "oklch(82% 0.000 89.9)",
+          "oklch(95% 0.000 89.9)"
+        ],
+        "note": "The only near-white in the palette; permitted to outshine a highlight because a search is a question just asked."
+      },
+      "logo-cobalt": {
+        "role": "tertiary",
+        "displayName": "Logo Cobalt",
+        "tonalRamp": [
+          "oklch(15% 0.167 266.0)",
+          "oklch(26% 0.167 266.0)",
+          "oklch(37% 0.167 266.0)",
+          "oklch(48% 0.167 266.0)",
+          "oklch(59% 0.167 266.0)",
+          "oklch(70% 0.167 266.0)",
+          "oklch(82% 0.167 266.0)",
+          "oklch(95% 0.167 266.0)"
+        ]
+      },
+      "logo-turquoise": {
+        "role": "tertiary",
+        "displayName": "Logo Turquoise",
+        "tonalRamp": [
+          "oklch(15% 0.129 190.0)",
+          "oklch(26% 0.129 190.0)",
+          "oklch(37% 0.129 190.0)",
+          "oklch(48% 0.129 190.0)",
+          "oklch(59% 0.129 190.0)",
+          "oklch(70% 0.129 190.0)",
+          "oklch(82% 0.129 190.0)",
+          "oklch(95% 0.129 190.0)"
+        ]
+      },
+      "error-coral": {
+        "role": "secondary",
+        "displayName": "Error Coral",
+        "tonalRamp": [
+          "oklch(15% 0.145 17.0)",
+          "oklch(26% 0.145 17.0)",
+          "oklch(37% 0.145 17.0)",
+          "oklch(48% 0.145 17.0)",
+          "oklch(59% 0.145 17.0)",
+          "oklch(70% 0.145 17.0)",
+          "oklch(82% 0.145 17.0)",
+          "oklch(95% 0.145 17.0)"
+        ],
+        "note": "The ERROR level tint, and position 1 of the highlight rotation."
+      },
+      "warn-amber": {
+        "role": "secondary",
+        "displayName": "Warn Amber",
+        "tonalRamp": [
+          "oklch(15% 0.097 82.3)",
+          "oklch(26% 0.097 82.3)",
+          "oklch(37% 0.097 82.3)",
+          "oklch(48% 0.097 82.3)",
+          "oklch(59% 0.097 82.3)",
+          "oklch(70% 0.097 82.3)",
+          "oklch(82% 0.097 82.3)",
+          "oklch(95% 0.097 82.3)"
+        ],
+        "note": "The WARN level tint, the MED severity step, and position 3 of the highlight rotation."
+      },
+      "crit-alarm-red": {
+        "role": "secondary",
+        "displayName": "Alarm Red",
+        "tonalRamp": [
+          "oklch(15% 0.206 24.4)",
+          "oklch(26% 0.206 24.4)",
+          "oklch(37% 0.206 24.4)",
+          "oklch(48% 0.206 24.4)",
+          "oklch(59% 0.206 24.4)",
+          "oklch(70% 0.206 24.4)",
+          "oklch(82% 0.206 24.4)",
+          "oklch(95% 0.206 24.4)"
+        ],
+        "note": "The one value permitted to leave the one-dark family (The One Break Rule)."
+      },
+      "high-ember-orange": {
+        "role": "secondary",
+        "displayName": "Ember Orange",
+        "tonalRamp": [
+          "oklch(15% 0.145 57.2)",
+          "oklch(26% 0.145 57.2)",
+          "oklch(37% 0.145 57.2)",
+          "oklch(48% 0.145 57.2)",
+          "oklch(59% 0.145 57.2)",
+          "oklch(70% 0.145 57.2)",
+          "oklch(82% 0.145 57.2)",
+          "oklch(95% 0.145 57.2)"
+        ]
+      },
+      "hl-coral": {
+        "role": "tertiary",
+        "displayName": "Coral",
+        "tonalRamp": [
+          "oklch(15% 0.145 17.0)",
+          "oklch(26% 0.145 17.0)",
+          "oklch(37% 0.145 17.0)",
+          "oklch(48% 0.145 17.0)",
+          "oklch(59% 0.145 17.0)",
+          "oklch(70% 0.145 17.0)",
+          "oklch(82% 0.145 17.0)",
+          "oklch(95% 0.145 17.0)"
+        ],
+        "note": "Rotation position 10. Same value as the ERROR level tint, so it is handed out only after the nine clean slots."
+      },
+      "hl-moss": {
+        "role": "tertiary",
+        "displayName": "Moss",
+        "tonalRamp": [
+          "oklch(15% 0.110 133.0)",
+          "oklch(26% 0.110 133.0)",
+          "oklch(37% 0.110 133.0)",
+          "oklch(48% 0.110 133.0)",
+          "oklch(59% 0.110 133.0)",
+          "oklch(70% 0.110 133.0)",
+          "oklch(82% 0.110 133.0)",
+          "oklch(95% 0.110 133.0)"
+        ],
+        "note": "Rotation position 1 — the first hue a user gets, chosen because nothing else owns it."
+      },
+      "hl-amber": {
+        "role": "tertiary",
+        "displayName": "Amber",
+        "tonalRamp": [
+          "oklch(15% 0.097 82.3)",
+          "oklch(26% 0.097 82.3)",
+          "oklch(37% 0.097 82.3)",
+          "oklch(48% 0.097 82.3)",
+          "oklch(59% 0.097 82.3)",
+          "oklch(70% 0.097 82.3)",
+          "oklch(82% 0.097 82.3)",
+          "oklch(95% 0.097 82.3)"
+        ],
+        "note": "Rotation position 11. Same value as the WARN level tint and MED severity; handed out after the clean slots."
+      },
+      "hl-azure": {
+        "role": "tertiary",
+        "displayName": "Azure",
+        "tonalRamp": [
+          "oklch(15% 0.121 245.3)",
+          "oklch(26% 0.121 245.3)",
+          "oklch(37% 0.121 245.3)",
+          "oklch(48% 0.121 245.3)",
+          "oklch(59% 0.121 245.3)",
+          "oklch(70% 0.121 245.3)",
+          "oklch(82% 0.121 245.3)",
+          "oklch(95% 0.121 245.3)"
+        ],
+        "note": "Rotation position 12, the most compromised: also the accent, the INFO tint and Low severity."
+      },
+      "hl-orchid": {
+        "role": "tertiary",
+        "displayName": "Orchid",
+        "tonalRamp": [
+          "oklch(15% 0.164 318.2)",
+          "oklch(26% 0.164 318.2)",
+          "oklch(37% 0.164 318.2)",
+          "oklch(48% 0.164 318.2)",
+          "oklch(59% 0.164 318.2)",
+          "oklch(70% 0.164 318.2)",
+          "oklch(82% 0.164 318.2)",
+          "oklch(95% 0.164 318.2)"
+        ]
+      },
+      "hl-cyan": {
+        "role": "tertiary",
+        "displayName": "Cyan",
+        "tonalRamp": [
+          "oklch(15% 0.092 206.3)",
+          "oklch(26% 0.092 206.3)",
+          "oklch(37% 0.092 206.3)",
+          "oklch(48% 0.092 206.3)",
+          "oklch(59% 0.092 206.3)",
+          "oklch(70% 0.092 206.3)",
+          "oklch(82% 0.092 206.3)",
+          "oklch(95% 0.092 206.3)"
+        ]
+      },
+      "hl-tangerine": {
+        "role": "tertiary",
+        "displayName": "Tangerine",
+        "tonalRamp": [
+          "oklch(15% 0.127 61.5)",
+          "oklch(26% 0.127 61.5)",
+          "oklch(37% 0.127 61.5)",
+          "oklch(48% 0.127 61.5)",
+          "oklch(59% 0.127 61.5)",
+          "oklch(70% 0.127 61.5)",
+          "oklch(82% 0.127 61.5)",
+          "oklch(95% 0.127 61.5)"
+        ],
+        "note": "Rotation position 9. One shade off High severity (#E88B3D), so it ends the clean run rather than sitting inside it."
+      },
+      "hl-rose": {
+        "role": "tertiary",
+        "displayName": "Rose",
+        "tonalRamp": [
+          "oklch(15% 0.123 356.5)",
+          "oklch(26% 0.123 356.5)",
+          "oklch(37% 0.123 356.5)",
+          "oklch(48% 0.123 356.5)",
+          "oklch(59% 0.123 356.5)",
+          "oklch(70% 0.123 356.5)",
+          "oklch(82% 0.123 356.5)",
+          "oklch(95% 0.123 356.5)"
+        ]
+      },
+      "hl-lime": {
+        "role": "tertiary",
+        "displayName": "Lime",
+        "tonalRamp": [
+          "oklch(15% 0.128 121.1)",
+          "oklch(26% 0.128 121.1)",
+          "oklch(37% 0.128 121.1)",
+          "oklch(48% 0.128 121.1)",
+          "oklch(59% 0.128 121.1)",
+          "oklch(70% 0.128 121.1)",
+          "oklch(82% 0.128 121.1)",
+          "oklch(95% 0.128 121.1)"
+        ]
+      },
+      "hl-mint": {
+        "role": "tertiary",
+        "displayName": "Mint",
+        "tonalRamp": [
+          "oklch(15% 0.112 169.1)",
+          "oklch(26% 0.112 169.1)",
+          "oklch(37% 0.112 169.1)",
+          "oklch(48% 0.112 169.1)",
+          "oklch(59% 0.112 169.1)",
+          "oklch(70% 0.112 169.1)",
+          "oklch(82% 0.112 169.1)",
+          "oklch(95% 0.112 169.1)"
+        ]
+      },
+      "hl-periwinkle": {
+        "role": "tertiary",
+        "displayName": "Periwinkle",
+        "tonalRamp": [
+          "oklch(15% 0.106 275.8)",
+          "oklch(26% 0.106 275.8)",
+          "oklch(37% 0.106 275.8)",
+          "oklch(48% 0.106 275.8)",
+          "oklch(59% 0.106 275.8)",
+          "oklch(70% 0.106 275.8)",
+          "oklch(82% 0.106 275.8)",
+          "oklch(95% 0.106 275.8)"
+        ]
+      },
+      "hl-brass": {
+        "role": "tertiary",
+        "displayName": "Brass",
+        "tonalRamp": [
+          "oklch(15% 0.096 85.6)",
+          "oklch(26% 0.096 85.6)",
+          "oklch(37% 0.096 85.6)",
+          "oklch(48% 0.096 85.6)",
+          "oklch(59% 0.096 85.6)",
+          "oklch(70% 0.096 85.6)",
+          "oklch(82% 0.096 85.6)",
+          "oklch(95% 0.096 85.6)"
+        ]
+      },
+      "chrome-danger": {
+        "role": "secondary",
+        "displayName": "Chrome Danger",
+        "tonalRamp": [
+          "oklch(15% 0.145 17.0)",
+          "oklch(26% 0.145 17.0)",
+          "oklch(37% 0.145 17.0)",
+          "oklch(48% 0.145 17.0)",
+          "oklch(59% 0.145 17.0)",
+          "oklch(70% 0.145 17.0)",
+          "oklch(82% 0.145 17.0)",
+          "oklch(95% 0.145 17.0)"
+        ],
+        "note": "File-browser directory-read error. Same value as the ERROR tint but its own token: it was a palette[0] lookup, which coupled browser chrome to the highlight rotation's order."
+      },
+      "chrome-marked": {
+        "role": "secondary",
+        "displayName": "Chrome Marked",
+        "tonalRamp": [
+          "oklch(15% 0.110 133.0)",
+          "oklch(26% 0.110 133.0)",
+          "oklch(37% 0.110 133.0)",
+          "oklch(48% 0.110 133.0)",
+          "oklch(59% 0.110 133.0)",
+          "oklch(70% 0.110 133.0)",
+          "oklch(82% 0.110 133.0)",
+          "oklch(95% 0.110 133.0)"
+        ],
+        "note": "A marked file in the browser. Same value as the moss highlight; exempt from the rotation's collision rule because the browser popup punches out the log and is never on screen beside a highlight."
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The ANSI-Shadow welcome banner, 60–61 cells wide with a 34-cell fallback, filled with the only gradient in the product. Appears exactly once, before any log is open."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Panel titles, inlaid in the top border. Accent when active, dim when not. Carries live state such as [FILTER] and [/query]."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Finding titles in the list and detail header. Bold is the selection cue, paired with a row wash."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "The log line itself and all list rows. Never bold — the log is quoted material. Only the cursor row goes bold, and only to answer \"where am I\"."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Severity badges, keycaps, tab labels, repeat counts, legend swatches. The smallest unit that carries state, so always bold."
+      }
+    },
+    "motion": [
+      {
+        "name": "work-advance",
+        "value": "bar head advances one cell per completed share of the corpus",
+        "purpose": "The only motion in the product, and it is data: the progress bar's head moves because lines were scanned. Nothing animates on a timer, spins, or blinks — a bar that moves while nothing happens would be a lie. Long work is chunked so the viewport never freezes and stays cancellable."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "log-min",
+        "value": "20 cells",
+        "purpose": "Minimum width of the log pane; it absorbs every resize."
+      },
+      {
+        "name": "legend-rail",
+        "value": "34 cells",
+        "purpose": "Fixed width of the highlights legend so its rows never reflow while being read."
+      },
+      {
+        "name": "display-banner-swap",
+        "value": "65 cells",
+        "purpose": "Below this pane width the 61-cell welcome banner swaps to its 34-cell variant."
+      }
+    ],
+    "notes": {
+      "medium": "This is a terminal UI (ratatui + crossterm), not a web or native surface. Values expressed in px, rem, or shadows do not exist here: the unit is the character cell, the font is whatever the user's terminal provides, and there is no compositor to cast a shadow. Component html/css below are faithful translations for preview only — they are not shipped code.",
+      "elevationTiers": [
+        "Ground — the log field and its panels, on the terminal's own background.",
+        "Wash — row wash #2E3440 on the cursor and selected rows; status trench #1B1F27 on the status band. Nearer because darker and denser, not lifted.",
+        "Punch-out — overlays clear the cells beneath them outright. A popup replaces that region of the viewer rather than floating above it."
+      ],
+      "tonalRamps": "Synthesized in OKLCH from each token's own hue and chroma across eight lightness steps (15–95%). The project ships no tonal scale of its own; these are for tooling preview, and only the frontmatter hex values are normative.",
+      "glyphVocabulary": {
+        "●": "a scanned severity",
+        "◆": "a bookmark",
+        "▸": "the row being acted on (active legend rule, selected setting)",
+        "██": "a highlight's color swatch",
+        "│": "the gutter rule",
+        "‹": "content hidden to the left",
+        "›": "an input prompt",
+        "█": "the input caret",
+        "✓": "a marked file",
+        "×N": "a repeat count",
+        "▌": "the leading edge of work in progress",
+        "░": "the part not yet read"
+      },
+      "latentTokens": "The Low (#61AFEF) and Info (#7C8394) severity steps are defined but latent, and currently rendered nowhere: the shipped signature library contains nothing below Medium, the severity bar skips empty segments, and the panel title, filter tabs, and export header are all derived from FINDING_FILTERS — the single reportable set. Reserved infrastructure, not dead code.",
+      "rotationOrder": "Highlight rotation order is a contract: moss, orchid, brass, cyan, rose, mint, periwinkle, lime, tangerine, then coral, amber, azure. The four values that are also semantic elsewhere come last, ranked by how compromised they are, leaving nine clean slots. The clean run's minimum circular hue separation is 107° (was 51°). Enforced by theme::tests::first_rotation_slots_avoid_semantic_colors."
+    }
+  },
+  "components": [
+    {
+      "name": "Panel (Active)",
+      "kind": "card",
+      "refersTo": "panel-active",
+      "description": "The only container form in the product: a rounded-arc box border with the title inlaid in the top edge, carrying live state.",
+      "html": "<pre class=\"ds-panel\"><span class=\"ds-panel-line\">╭</span><span class=\"ds-panel-title\"> agent.log [FILTER] [/cert] </span><span class=\"ds-panel-line\">──────────────────╮</span>\n<span class=\"ds-panel-line\">│</span>                                              <span class=\"ds-panel-line\">│</span>\n<span class=\"ds-panel-line\">│</span>   <span class=\"ds-panel-body\">active panels border and title in accent</span>   <span class=\"ds-panel-line\">│</span>\n<span class=\"ds-panel-line\">│</span>                                              <span class=\"ds-panel-line\">│</span>\n<span class=\"ds-panel-line\">╰──────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-panel { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-panel-line { color: #61AFEF; } .ds-panel-title { color: #61AFEF; font-weight: 700; } .ds-panel-body { color: #CED3DE; }"
+    },
+    {
+      "name": "Log Line",
+      "kind": "custom",
+      "refersTo": "log-line",
+      "description": "The signature component. Fixed zones: 2-cell annotation slot, right-aligned line number, the gutter rule, then the log text with its level tint, highlight fills, and search fills layered on top.",
+      "html": "<pre class=\"ds-log\"><span class=\"ds-log-row ds-log-row--cursor\"><span class=\"ds-dot ds-dot--crit\">● </span><span class=\"ds-gutter\">1247 │ </span><span class=\"ds-tint-error\">2026-07-22 10:00:07 ERROR </span><span class=\"ds-hl\">Certificate</span><span class=\"ds-tint-error\"> validation failed</span></span>\n<span class=\"ds-log-row\"><span class=\"ds-dot ds-dot--bookmark\">◆ </span><span class=\"ds-gutter ds-gutter--marked\">1248 │ </span><span class=\"ds-tint-warn\">2026-07-22 10:00:09 WARN  </span><span class=\"ds-search\">Suspicious</span><span class=\"ds-tint-warn\"> process detected</span></span>\n<span class=\"ds-log-row\"><span class=\"ds-dot\">  </span><span class=\"ds-gutter\">1249 │ </span><span class=\"ds-tint-info\">2026-07-22 10:00:11 INFO  Update check scheduled</span></span>\n<span class=\"ds-log-row\"><span class=\"ds-dot\">  </span><span class=\"ds-gutter\">1250 │ </span><span class=\"ds-pan\">‹</span>protection module loaded, 4 rules active</span></pre>",
+      "css": ".ds-log { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-log-row { display: block; } .ds-log-row:hover { background: #2E3440; } .ds-log-row--cursor { background: #2E3440; font-weight: 700; } .ds-dot--crit { color: #FF5555; } .ds-dot--bookmark { color: #61AFEF; } .ds-gutter { color: #5A6172; } .ds-gutter--marked { color: #61AFEF; } .ds-tint-error { color: #E06C75; } .ds-tint-warn { color: #E5C07B; } .ds-tint-info { color: #61AFEF; } .ds-pan { color: #7C8394; } .ds-hl { background: #E06C75; color: #14161B; font-weight: 700; } .ds-search { background: #F5F5F5; color: #14161B; font-weight: 700; }"
+    },
+    {
+      "name": "Severity Badge",
+      "kind": "chip",
+      "refersTo": "severity-badge-crit",
+      "description": "A severity's color as a fill with its label always attached, left-aligned in a fixed 4-cell field so a mixed list stays column-aligned. Low and Info are defined but latent today.",
+      "html": "<pre class=\"ds-badges\"><span class=\"ds-badge ds-badge--crit\"> CRIT </span>  <span class=\"ds-badge ds-badge--high\"> HIGH </span>  <span class=\"ds-badge ds-badge--med\"> MED  </span>  <span class=\"ds-badge ds-badge--low\"> LOW  </span>  <span class=\"ds-badge ds-badge--info\"> INFO </span></pre>",
+      "css": ".ds-badges { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-badge { color: #14161B; font-weight: 700; } .ds-badge--crit { background: #FF5555; } .ds-badge--high { background: #E88B3D; } .ds-badge--med { background: #E5C07B; } .ds-badge--low { background: #61AFEF; } .ds-badge--info { background: #7C8394; }"
+    },
+    {
+      "name": "Findings List Row",
+      "kind": "custom",
+      "refersTo": "severity-badge-crit",
+      "description": "Badge, then title, then a repeat count in the severity's own color (omitted entirely at one hit), then a dim file:line location. Selection is a row wash plus bold, never a border or arrow. Rows are clickable.",
+      "html": "<pre class=\"ds-findings\"><span class=\"ds-row ds-row--sel\"><span class=\"ds-badge ds-badge--crit\"> CRIT </span> <span class=\"ds-title\">Encoded PowerShell command</span><span class=\"ds-rep ds-rep--crit\">  ×912</span><span class=\"ds-loc\">  agent.log:4471</span></span>\n<span class=\"ds-row\"><span class=\"ds-badge ds-badge--high\"> HIGH </span> <span class=\"ds-title\">Certificate validation failed</span><span class=\"ds-rep ds-rep--high\">  ×3</span><span class=\"ds-loc\">  update.log:88</span></span>\n<span class=\"ds-row\"><span class=\"ds-badge ds-badge--med\"> MED  </span> <span class=\"ds-title\">System clock moved backwards</span><span class=\"ds-loc\">  system.log:1204</span></span></pre>",
+      "css": ".ds-findings { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-row { display: block; } .ds-row:hover { background: #2E3440; cursor: pointer; } .ds-row--sel { background: #2E3440; } .ds-row--sel .ds-title { font-weight: 700; } .ds-badge { color: #14161B; font-weight: 700; } .ds-badge--crit { background: #FF5555; } .ds-badge--high { background: #E88B3D; } .ds-badge--med { background: #E5C07B; } .ds-title { color: #CED3DE; } .ds-rep { font-weight: 700; } .ds-rep--crit { color: #FF5555; } .ds-rep--high { color: #E88B3D; } .ds-loc { color: #7C8394; }"
+    },
+    {
+      "name": "Severity Bar",
+      "kind": "custom",
+      "description": "The only quantitative graphic in the product: one cell tall, Critical to Info left to right, each segment floored at one cell so a lone Critical is never rounded away. No axis, no legend, no frame — that restraint is what keeps it out of dashboard territory.",
+      "html": "<pre class=\"ds-sevbar\"><span class=\"ds-seg ds-seg--crit\">████████</span><span class=\"ds-seg ds-seg--high\">██████████████</span><span class=\"ds-seg ds-seg--med\">██████████████████████</span></pre>",
+      "css": ".ds-sevbar { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-seg--crit { color: #FF5555; } .ds-seg--high { color: #E88B3D; } .ds-seg--med { color: #E5C07B; }"
+    },
+    {
+      "name": "Severity Filter Tabs",
+      "kind": "chip",
+      "description": "Each severity paired with its live count and tinted in its own color. The active tab is reversed rather than merely colored, so selection stays readable on terminals that render the severity palette faintly. An empty tab dims but stays selectable.",
+      "html": "<pre class=\"ds-tabs\"><span class=\"ds-tabs-lead\"> filter </span><span class=\"ds-tab\"> all 19 </span> <span class=\"ds-tab ds-tab--active\"> CRIT 1 </span> <span class=\"ds-tab ds-tab--high\"> HIGH 4 </span> <span class=\"ds-tab ds-tab--empty\"> MED 0 </span> <span class=\"ds-keycap\">f/F or ←/→</span></pre>",
+      "css": ".ds-tabs { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-tabs-lead { color: #7C8394; } .ds-tab { color: #CED3DE; } .ds-tab--active { background: #FF5555; color: #14161B; font-weight: 700; } .ds-tab--high { color: #E88B3D; } .ds-tab--empty { color: #7C8394; } .ds-keycap { color: #61AFEF; font-weight: 700; }"
+    },
+    {
+      "name": "Highlights Legend Row",
+      "kind": "nav",
+      "description": "A fixed 34-cell reference rail: an active marker, the rule's color as a double-block swatch, its label, then its kind and live match count. Clicking a row walks that highlight's matches.",
+      "html": "<pre class=\"ds-legend\"><span class=\"ds-leg-row\"><span class=\"ds-leg-mark\">▸ </span><span class=\"ds-sw ds-sw--1\">██</span> <span class=\"ds-leg-label ds-leg-label--active\">ERROR </span><span class=\"ds-leg-meta\">kw 4</span></span>\n<span class=\"ds-leg-row\"><span class=\"ds-leg-mark\">  </span><span class=\"ds-sw ds-sw--2\">██</span> <span class=\"ds-leg-label\">timeout </span><span class=\"ds-leg-meta\">kw 12</span></span>\n<span class=\"ds-leg-row\"><span class=\"ds-leg-mark\">  </span><span class=\"ds-sw ds-sw--3\">██</span> <span class=\"ds-leg-label\">0x[0-9a-f]+ </span><span class=\"ds-leg-meta\">re 31</span></span></pre>",
+      "css": ".ds-legend { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-leg-row { display: block; } .ds-leg-row:hover { background: #2E3440; cursor: pointer; } .ds-leg-mark { color: #61AFEF; } .ds-sw--1 { color: #E06C75; } .ds-sw--2 { color: #98C379; } .ds-sw--3 { color: #E5C07B; } .ds-leg-label { color: #CED3DE; } .ds-leg-label--active { font-weight: 700; } .ds-leg-meta { color: #7C8394; }"
+    },
+    {
+      "name": "Status Bar",
+      "kind": "nav",
+      "refersTo": "status-bar",
+      "description": "One unbordered cell pinned to the bottom. Segments join with a middle dot and appear only when non-default, always ending in the help affordance. A transient message takes the whole band in bold accent.",
+      "html": "<pre class=\"ds-status\"><span class=\"ds-status-band\"> L1247/9004 · 47 hl · 2 bm · /cert · 19 fd  ·  ? help</span>\n<span class=\"ds-status-band ds-status-band--msg\"> no bookmarks — press m to mark a line</span></pre>",
+      "css": ".ds-status { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-status-band { display: block; background: #1B1F27; color: #ABB2BF; } .ds-status-band--msg { color: #61AFEF; font-weight: 700; margin-top: 6px; }"
+    },
+    {
+      "name": "Input Prompt",
+      "kind": "input",
+      "refersTo": "input-prompt",
+      "description": "A 60%-wide, 3-cell rounded panel whose title states the task and both exits. The block caret is static — nothing in this system blinks.",
+      "html": "<pre class=\"ds-input\"><span class=\"ds-in-line\">╭</span><span class=\"ds-in-title\"> Add keyword highlight — Enter to go, Esc to cancel </span><span class=\"ds-in-line\">─╮</span>\n<span class=\"ds-in-line\">│</span> <span class=\"ds-in-prompt\">› </span><span class=\"ds-in-text\">certificate</span><span class=\"ds-in-caret\">█</span>                                      <span class=\"ds-in-line\">│</span>\n<span class=\"ds-in-line\">╰─────────────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-input { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-in-line { color: #61AFEF; } .ds-in-title { color: #61AFEF; font-weight: 700; } .ds-in-prompt { color: #61AFEF; } .ds-in-text { color: #CED3DE; } .ds-in-caret { color: #61AFEF; }"
+    },
+    {
+      "name": "Keycap Footer",
+      "kind": "nav",
+      "refersTo": "keycap",
+      "description": "The mechanism behind the component philosophy: every surface ends by naming its next move as a literal key in accent bold with dim prose beside it.",
+      "html": "<pre class=\"ds-keys\"><span class=\"ds-key\">j/k</span><span class=\"ds-key-desc\"> move   </span><span class=\"ds-key\">f/F</span><span class=\"ds-key-desc\"> filter   </span><span class=\"ds-key\">Enter/click</span><span class=\"ds-key-desc\"> jump   </span><span class=\"ds-key\">e</span><span class=\"ds-key-desc\"> export   </span><span class=\"ds-key\">q/Esc</span><span class=\"ds-key-desc\"> close</span></pre>",
+      "css": ".ds-keys { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-key { color: #61AFEF; font-weight: 700; } .ds-key-desc { color: #7C8394; }"
+    },
+    {
+      "name": "Welcome Screen",
+      "kind": "custom",
+      "refersTo": "panel-active",
+      "description": "First-run state, vertically centred in the log pane: the ANSI-Shadow banner filled with the product's only gradient (per-row interpolation from Logo Cobalt to Logo Turquoise), the version, the tagline, then two rows of keycaps. Swaps to a 34-cell banner below ~65 cells of pane width, and disappears permanently once a file is open. Note the keycap descriptions here are Paper White rather than the Slate Mute used in every other footer — the welcome screen is the one place the product is allowed to be decorative.",
+      "html": "<pre class=\"ds-welcome\"><span class=\"ds-wel-line\">╭</span><span class=\"ds-wel-title\"> loglens </span><span class=\"ds-wel-line\">─────────────────────────────────────────────────────────╮</span>\n<span class=\"ds-wel-line\">│</span>                                                                  <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>   <span class=\"ds-wel-g0\">██╗      ██████╗  ██████╗ ██╗     ███████╗███╗   ██╗███████╗</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>   <span class=\"ds-wel-g1\">██║     ██╔═══██╗██╔════╝ ██║     ██╔════╝████╗  ██║██╔════╝</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>   <span class=\"ds-wel-g2\">██║     ██║   ██║██║  ███╗██║     █████╗  ██╔██╗ ██║███████╗</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>   <span class=\"ds-wel-g3\">██║     ██║   ██║██║   ██║██║     ██╔══╝  ██║╚██╗██║╚════██║</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>  <span class=\"ds-wel-g4\">███████╗╚██████╔╝╚██████╔╝███████╗███████╗██║ ╚██╗██║███████║</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>  <span class=\"ds-wel-g5\">╚══════╝ ╚═════╝  ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝╚══════╝</span>   <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                                                                  <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                          <span class=\"ds-wel-dim\">Version 0.1.0</span>                           <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                                                                  <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>               <span class=\"ds-wel-dim\">highlight what matters in your logs</span>                <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                                                                  <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>             <span class=\"ds-wel-key\">o</span> open logs    <span class=\"ds-wel-key\">a</span> add highlight    <span class=\"ds-wel-key\">S</span> scan             <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                         <span class=\"ds-wel-key\">?</span> help    <span class=\"ds-wel-key\">q</span> quit                         <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">│</span>                                                                  <span class=\"ds-wel-line\">│</span>\n<span class=\"ds-wel-line\">╰──────────────────────────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-welcome { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-wel-line { color: #61AFEF; } .ds-wel-title { color: #61AFEF; font-weight: 700; } .ds-wel-g0 { color: #5B84EF; font-weight: 700; } .ds-wel-g1 { color: #5596EA; font-weight: 700; } .ds-wel-g2 { color: #4FA9E6; font-weight: 700; } .ds-wel-g3 { color: #4ABBE1; font-weight: 700; } .ds-wel-g4 { color: #44CEDD; font-weight: 700; } .ds-wel-g5 { color: #3EE0D8; font-weight: 700; } .ds-wel-dim { color: #7C8394; } .ds-wel-key { color: #61AFEF; font-weight: 700; }"
+    },
+    {
+      "name": "Help Sheet",
+      "kind": "custom",
+      "refersTo": "panel-active",
+      "description": "The keybinding reference, excerpted here to two columns. Keys sit in body Paper White and descriptions recede to Slate Mute, so the sheet has a scan hierarchy while Signal Blue stays reserved for the five section heads. The key column is generated, padded by character count so multi-byte arrow labels stay in column. Sized to its own content rather than a share of the terminal: it reflows into two columns near 135 cells, and scrolls with the log pane's own scrollbar when the terminal is too short.",
+      "html": "<pre class=\"ds-help\"><span class=\"ds-help-line\">╭──────────────────────────────────────────────</span><span class=\"ds-help-title\"> Help (?/q/Esc to close) </span><span class=\"ds-help-line\">──────────────────────────────────────────────╮</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-strong\">loglens — keybindings</span>                                                                                                <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span>                                                                                                                     <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-head\">Viewer</span>                                                    <span class=\"ds-help-head\">Scan &amp; triage</span>                                              <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">  j/k, ↑/↓</span>        <span class=\"ds-help-desc\">scroll one line   (or mouse wheel)</span>      <span class=\"ds-help-key\">  S</span>               <span class=\"ds-help-desc\">scan for known-bad signatures, ranked</span>    <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">  ← / →</span>           <span class=\"ds-help-desc\">pan left / right (long lines)</span>           <span class=\"ds-help-key\">  p / P</span>           <span class=\"ds-help-desc\">next / previous finding (wraps; no panel)</span><span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">  :</span>               <span class=\"ds-help-desc\">go to line number</span>                                                                                  <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">  m</span>               <span class=\"ds-help-desc\">toggle bookmark on current line</span>         <span class=\"ds-help-head\">Search &amp; filter</span>                                            <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">  y</span>               <span class=\"ds-help-desc\">copy the cursor line to the clipboard</span>   <span class=\"ds-help-key\">  /</span>               <span class=\"ds-help-desc\">search (Enter first · n/N walk)</span>          <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span>                                                          <span class=\"ds-help-key\">  f</span>               <span class=\"ds-help-desc\">filter: matching lines only</span>              <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">│</span><span class=\"ds-help-key\">?/q/Esc</span><span class=\"ds-help-desc\"> close help</span>                                                                                                   <span class=\"ds-help-line\">│</span>\n<span class=\"ds-help-line\">╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-help { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-help-line { color: #61AFEF; } .ds-help-title { color: #61AFEF; font-weight: 700; } .ds-help-head { color: #61AFEF; font-weight: 700; } .ds-help-strong { color: #CED3DE; font-weight: 700; } .ds-help-key { color: #CED3DE; } .ds-help-desc { color: #7C8394; }"
+    },
+    {
+      "name": "Progress Overlay",
+      "kind": "custom",
+      "refersTo": "panel-active",
+      "description": "Chunked-work overlay, sized to its own rows rather than a share of the terminal. The bar's length is real progress and its composition is the severity mix found so far — the findings panel's own severity bar, scaled to the scanned length — so the reader watches the verdict assemble before the report opens. A clean scan fills in accent; the first Critical repaints the run in Alarm Red. `▌` marks the boundary between read and unread and `░` carries the remainder; both vanish at 100%. Motion comes only from work actually completing, never a timer. Progress is never shown without an exit.",
+      "html": "<pre class=\"ds-progress\"><span class=\"ds-pg-line\">╭</span><span class=\"ds-pg-title\"> Scanning for known-bad signatures… </span><span class=\"ds-pg-line\">────────╮</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-crit\">█████</span><span class=\"ds-pg-high\">█████████</span><span class=\"ds-pg-med\">██████████████</span><span class=\"ds-pg-head\">▌</span><span class=\"ds-pg-track\">░░░░░░░░░░░</span><span class=\"ds-pg-pct\"> 71%</span><span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-text\"> 6390/9000 lines</span><span class=\"ds-pg-dim\">   ·   </span><span class=\"ds-pg-accent\">6 findings so far</span>    <span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-dim\"> agent.log</span><span class=\"ds-pg-dim\">      Esc to cancel</span>               <span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">╰────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-progress { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-pg-line { color: #61AFEF; } .ds-pg-title { color: #61AFEF; font-weight: 700; } .ds-pg-crit { color: #FF5555; } .ds-pg-high { color: #E88B3D; } .ds-pg-med { color: #E5C07B; } .ds-pg-head { color: #61AFEF; font-weight: 700; } .ds-pg-track { color: #454C5E; } .ds-pg-pct { color: #CED3DE; } .ds-pg-text { color: #CED3DE; } .ds-pg-accent { color: #61AFEF; } .ds-pg-dim { color: #7C8394; }"
+    },
+    {
+      "name": "Settings Panel",
+      "kind": "custom",
+      "refersTo": "panel-active",
+      "description": "Preferences overlay, opened with `,` (the editor convention). Sized to its own rows, never a share of the terminal. A row is `▸ Label      i   [ on]`: the marker is the same ▸ the legend uses for the row being acted on, and the selected row wears the Row Wash — the same cursor treatment as the log and the findings list, leaving REVERSED reserved for the severity filter tabs. The `[ on]`/`[off]` field is pinned to the widest row rather than to the panel edge, so a long explanation underneath can widen the panel without stranding the values beside it; on carries the accent, off recedes with a dimmer color. A setting that also has a viewer key shows it in accent, so opening the panel once is how a user stops needing it. Every row dispatches to the same toggle its keybinding calls — a second door onto one behaviour, not a parallel implementation. Being topmost, it claims the whole click: a row toggles, anywhere else is absorbed rather than falling through to the log it covers.",
+      "html": "<pre class=\"ds-settings\"><span class=\"ds-st-line\">╭</span><span class=\"ds-st-title\"> Settings </span><span class=\"ds-st-line\">──────────────────────────────────────────────╮</span>\n<span class=\"ds-st-line\">│</span>                                                        <span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-row ds-st-row--sel\">  <span class=\"ds-st-mark\">▸</span> Ignore case in highlights   <span class=\"ds-st-key\">i</span>   <span class=\"ds-st-on\">[ on]</span>       </span><span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span><span class=\"ds-st-row\">    Show highlight legend       <span class=\"ds-st-key\">l</span>   <span class=\"ds-st-on\">[ on]</span>       </span><span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span><span class=\"ds-st-row\">    Scan on open                    <span class=\"ds-st-off\">[off]</span>       </span><span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span>                                                        <span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span><span class=\"ds-st-detail\">  Keyword and regex highlights match regardless of case.</span><span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span>                                                        <span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">│</span>  <span class=\"ds-st-cap\">j/k</span><span class=\"ds-st-dim\"> move   </span><span class=\"ds-st-cap\">Enter</span><span class=\"ds-st-dim\"> toggle   </span><span class=\"ds-st-cap\">Esc</span><span class=\"ds-st-dim\"> close</span>       <span class=\"ds-st-line\">│</span>\n<span class=\"ds-st-line\">╰────────────────────────────────────────────────────────╯</span></pre>",
+      "css": ".ds-settings { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-st-line { color: #61AFEF; } .ds-st-title { color: #61AFEF; font-weight: 700; } .ds-st-row { display: inline-block; } .ds-st-row--sel { background: #2E3440; } .ds-st-mark { color: #61AFEF; } .ds-st-key { color: #61AFEF; } .ds-st-on { color: #61AFEF; } .ds-st-off { color: #7C8394; } .ds-st-detail { color: #7C8394; } .ds-st-cap { color: #61AFEF; } .ds-st-dim { color: #7C8394; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Radiologist's Lightbox",
+    "overview": "loglens is a dark, evenly-lit field that you hold a log up against so its anomalies glow on their own. The ground is deliberately underexposed — a muted one-dark graphite — not because dark terminals are fashionable, but because tint only carries meaning when nothing around it competes. An INFO line recedes into the ground. A WARN line warms. An ERROR line glows. That gradient is the primary reading instrument, and it works before the user has typed a single keyword.\n\nReading a lightbox is diagnosis, so a signal is never left to speak for itself. Every marked thing is paired with plain English: a severity finding carries a title, a category, and an explanation of what the condition means; an empty state names the key that gets you out of it; a footer spells out its own keycaps. The system is legible under pressure first — a tired reader at 2am must never have to decode a color — and warm and explanatory second, where warmth means the interface teaches rather than that it softens. There is no pastel here, no illustration, no reassurance. The warmth is entirely in the sentences.\n\nTwo anti-references are confirmed and binding. loglens is not an enterprise SIEM dashboard: no tiles, no donuts, no KPI panels, no chrome that frames data instead of showing it. And it is not a neon hacker terminal: no glow, no blink, no green-on-black, no saturation deployed as personality. Both failures share a root cause — spending attention on the interface that belongs to the evidence. The log is the subject; everything else is apparatus.",
+    "keyCharacteristics": [
+      "A dark, even ground (#1B1F27–#2E3440) whose job is to stay boring so tint reads",
+      "Four-step level tint applied to raw log text before any user configuration",
+      "A five-step severity scale in which exactly one value is permitted to leave the palette family",
+      "Bold and reverse are the only text attributes in the system — no italic, no underline, no blink",
+      "Every judgment is a marginal annotation (● ◆ ▸ ██), never an edit to the log line",
+      "Every colored background carries near-black #14161B text, at every size, without exception",
+      "Rounded-arc panels (╭ ╮ ╰ ╯) as the single container form",
+      "No shadows, no fake depth: three tonal tiers and a hard popup punch-out"
+    ],
+    "rules": [
+      {
+        "name": "The One Break Rule",
+        "body": "Exactly one color in loglens may leave the one-dark family, and it is Alarm Red #FF5555 on CRIT. It outranks the in-family ERROR tint #E06C75 by being visibly out of place — that dissonance is the mechanism, not an accident. A second out-of-family value would spend the same rank twice and cost this one its power. Adding one is a violation.",
+        "section": "colors"
+      },
+      {
+        "name": "The Dark-Text-On-Fill Rule",
+        "body": "Every filled surface — severity badge, highlight span, search match, active tab, selected row — pairs its color with Ink Black #14161B. No exceptions for \"light enough\" fills. This is what lets the 12-hue rotation accept any new color without a per-hue contrast decision.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Languages Rule",
+        "body": "Severity color is the product's judgment; highlight color is the user's bookkeeping. They must never be blended, cross-referenced, or unified into one scale. A finding never adopts a highlight hue, and a highlight never inherits a severity.",
+        "section": "colors"
+      },
+      {
+        "name": "The Label-Always Rule",
+        "body": "Color never carries meaning alone. Every severity renders its text label (CRIT HIGH MED LOW INFO) adjacent to its color, so a monochrome terminal, a colorblind reader, or a low-fidelity palette loses no information. Any future signal must pass the same test: turn the color off, and the screen must still be readable.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Attribute Rule",
+        "body": "Bold and reverse are the only text attributes in this system. No italic, no underline, no strikethrough, and above all no blink. Reverse is reserved for one job.",
+        "section": "typography"
+      },
+      {
+        "name": "The Dim-Is-A-Color Rule",
+        "body": "Recession is expressed with a dimmer color — Slate Mute, Gutter Steel, Panel Graphite — never with the terminal DIM attribute, which renders inconsistently or not at all across terminals and would silently drop the hierarchy. If something should recede, give it a color, not an attribute.",
+        "section": "typography"
+      },
+      {
+        "name": "The Reverse-For-Selected Rule",
+        "body": "REVERSED exists for one purpose: the active severity filter tab. Because those tabs are tinted with the severity palette itself, a terminal that renders those hues faintly would leave the selection ambiguous — reversing the cell makes \"selected\" structural rather than chromatic. Do not spend reverse anywhere else.",
+        "section": "typography"
+      },
+      {
+        "name": "The Log-Is-Quoted Rule",
+        "body": "Never restyle the log's own text to express your own emphasis. Level tint recolors it; highlights and search fill behind it; nothing bolds, cases, truncates, or rewrites it. Panning horizontally does not even change a line's tint, because the tint is a property of the whole line, not of the slice on screen.",
+        "section": "typography"
+      },
+      {
+        "name": "The Held-Row Rule",
+        "body": "A row must not move because state changed elsewhere. Findings scroll position is held in application state, not derived at render time, so the window stays still while the selection moves inside it. A directory-read error takes over the browser's footer row instead of being inserted into the list, because inserting a row would shift every entry and silently break click-to-row mapping. If new information needs a row, take an existing one.",
+        "section": "layout"
+      },
+      {
+        "name": "The Quiet-Default Rule",
+        "body": "Status segments, repeat counts, pan cues, and scrollbars exist only when they carry information. A repeat count is absent at ×1 and emphasized in the severity's own color at ×900, because the difference between \"this happened\" and \"this happened 900 times\" is the whole finding.",
+        "section": "layout"
+      },
+      {
+        "name": "The No-Fake-Depth Rule",
+        "body": "Never simulate elevation. No ASCII drop shadows, no offset duplicate borders, no half-block gradients under panels, no dimmed backdrop behind a modal. Three tiers, tonal only. If something needs to feel closer, darken beneath it or give it the accent border.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One-Frame Rule",
+        "body": "Rounded arcs on every panel, no other border type, ever. No double lines, no heavy lines, no borderless \"card\" surfaces, no dashed dividers.",
+        "section": "shapes"
+      },
+      {
+        "name": "The One-Glyph-One-Meaning Rule",
+        "body": "Each glyph in the vocabulary carries exactly one meaning system-wide. Before introducing a new glyph, prove that no existing one covers it — and prove it survives a terminal that renders it as a blank or a double-width cell.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do let the ground stay underexposed and even. Tint only carries meaning when nothing around it competes; the field's dullness is load-bearing.",
+      "Do pair every color with a word. Severity labels (CRIT/HIGH/MED), level tokens, and counts must survive the color being turned off.",
+      "Do put Ink Black #14161B on every filled surface — badges, highlights, search matches, active tabs, selected rows — without a per-color contrast exception.",
+      "Do keep annotation in the margin. Dots, bookmarks, numbers, and cues accrue leftward of the │; the log's own text is quoted, never edited.",
+      "Do hold the grid: one cell per row, the gutter sized to the file's last line number, the text column fixed for the whole file.",
+      "Do end every surface with its next move as a literal keycap in Signal Blue with dim prose beside it.",
+      "Do express recession with a dimmer color, and reserve REVERSED for the active severity filter tab.",
+      "Do show a segment only when it carries information — no ×1, no empty filter marker, no scrollbar on content that fits.",
+      "Do make long work chunked, cancellable, and honest about its progress.",
+      "Do distinguish \"nothing here\" from \"nothing matched\" in every empty state."
+    ],
+    "donts": [
+      "Don't add a second out-of-family color. Alarm Red #FF5555 on CRIT is the one permitted break, and a second one costs it its rank.",
+      "Don't build a dashboard. No tiles, donuts, gauges-as-decoration, KPI panels, or chart frames. Quantitative graphics stay one row tall and inline, like the severity bar.",
+      "Don't reach for neon-terminal affect: no glow, no blink, no green-on-black, no saturation standing in for personality.",
+      "Don't use italic, underline, strikethrough, blink, or the terminal DIM attribute. Bold and reverse are the whole vocabulary.",
+      "Don't simulate depth — no ASCII shadows, offset borders, half-block gradients, or dimmed modal backdrops. Three tonal tiers and a hard punch-out.",
+      "Don't introduce a second border style. Rounded arcs on every panel, always.",
+      "Don't blend the two color languages: findings never adopt highlight hues, highlights never inherit severities.",
+      "Don't let a row move because state changed elsewhere — take an existing row instead of inserting one, and never break click-to-row mapping.",
+      "Don't restyle the log's own text for emphasis, or let horizontal panning change a line's tint.",
+      "Don't add a 13th highlight hue without checking it against all four level tints and all five severity steps.",
+      "Don't add emoji beyond the file browser's 📁/📄, or a glyph whose meaning an existing one already carries.",
+      "Don't specify a font, font size, or line height. The terminal owns those, and assuming otherwise breaks the grid."
+    ]
+  }
+}
