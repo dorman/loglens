@@ -424,6 +424,9 @@ pub struct Search {
 }
 
 pub struct App {
+    /// Scan on open, without waiting for `S`. Off until `enable_auto_scan` turns
+    /// it on, so constructing an App never kicks off background work by surprise.
+    auto_scan: bool,
     pub rules: Vec<Rule>,
     pub files: Vec<LogFile>,
     pub current: usize,
@@ -510,6 +513,7 @@ impl App {
             rescan: None,
             input_kind: InputKind::Keyword,
             input_buffer: String::new(),
+            auto_scan: false,
             show_legend: true,
             show_help: false,
             help_scroll: 0,
@@ -616,6 +620,32 @@ impl App {
             (n, e, 0) => format!("opened {n}, {e} failed/skipped"),
             (n, e, t) => format!("opened {n}, {e} failed/skipped ({t} truncated)"),
         });
+        // Findings are global, so adding files rescans the corpus and keeps the
+        // report whole rather than reporting on a subset.
+        if self.auto_scan && opened > 0 {
+            self.scan_after_open();
+        }
+    }
+
+    /// Scan on open from here on, and scan whatever is already loaded.
+    ///
+    /// Separate from [`App::new`] so building an App is side-effect free — tests
+    /// and any non-interactive caller opt in explicitly.
+    pub fn enable_auto_scan(&mut self) {
+        self.auto_scan = true;
+        if self.has_files() {
+            self.scan_after_open();
+        }
+    }
+
+    /// Start a scan without discarding the open feedback that preceded it: the
+    /// reader still needs to know what was opened, and what failed.
+    fn scan_after_open(&mut self) {
+        let opened = self.status.take();
+        self.begin_scan();
+        if let Some(msg) = opened {
+            self.status = Some(format!("{msg} · scanning…"));
+        }
     }
 
     /// Open the marked files (or the selected file) from the browser.
@@ -1674,18 +1704,23 @@ impl App {
         } else {
             format!("{total} findings")
         };
+        // The tally lists only reportable severities; spelling all five out left a
+        // permanent "0 low, 0 info" here the way it used to in the panel title.
+        let tally = severity_tally(c);
         self.status = Some(if total == 0 {
-            "scan complete — nothing notable found".into()
+            // No panel opens on a clean scan, so the status line is the whole
+            // report: say what was covered, not just that nothing turned up.
+            let lines: usize = self.files.iter().map(|f| f.lines.len()).sum();
+            let files = self.files.len();
+            if files == 1 {
+                format!("scan complete — nothing notable in {lines} lines")
+            } else {
+                format!("scan complete — nothing notable in {lines} lines across {files} files")
+            }
         } else if capped {
-            format!(
-                "scan: {scale} (capped)  ({} crit, {} high, {} med, {} low, {} info)",
-                c[4], c[3], c[2], c[1], c[0]
-            )
+            format!("scan: {scale} (capped) · {tally}")
         } else {
-            format!(
-                "scan: {scale}  ({} crit, {} high, {} med, {} low, {} info)",
-                c[4], c[3], c[2], c[1], c[0]
-            )
+            format!("scan: {scale} · {tally}")
         });
     }
 
@@ -2307,6 +2342,119 @@ mod tests {
             app.help_scroll, 0,
             "help is a reference, not a resumed view"
         );
+    }
+
+    /// The whole flow the way `main` runs it: open a bundle, arm the scan, let the
+    /// event loop advance it, and land on a report without a keystroke.
+    #[test]
+    fn opening_a_bundle_scans_it_and_opens_the_report() {
+        let mut app = app_with_paths(&["samples/bundle"]);
+        app.enable_auto_scan();
+        assert!(app.scanning(), "no keystroke should be needed to start");
+        assert!(
+            !app.show_findings,
+            "the report waits until the scan finishes"
+        );
+
+        let mut frames = 0;
+        while !app.scan_step(4000) {
+            frames += 1;
+            assert!(frames < 10_000, "scan did not finish");
+        }
+
+        assert!(
+            !app.findings.is_empty(),
+            "the sample bundle has known findings"
+        );
+        assert!(app.show_findings, "a scan with findings opens the report");
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.starts_with("scan: "), "{status}");
+        assert_eq!(
+            app.severity_counts().iter().sum::<usize>(),
+            app.findings.len()
+        );
+    }
+
+    #[test]
+    fn constructing_an_app_does_not_start_a_scan() {
+        // App::new stays side-effect free; only `enable_auto_scan` arms it.
+        let app = app_with_paths(&["samples/sample.log"]);
+        assert!(!app.scanning());
+        assert!(app.findings.is_empty());
+    }
+
+    #[test]
+    fn enabling_auto_scan_scans_the_already_open_files() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        app.enable_auto_scan();
+        assert!(
+            app.scanning(),
+            "the scan should be armed, not deferred to `S`"
+        );
+        // Open feedback survives: the reader still needs to know what loaded.
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("opened"), "{status}");
+        assert!(status.contains("scanning…"), "{status}");
+    }
+
+    #[test]
+    fn enabling_auto_scan_with_no_files_scans_nothing() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        assert!(!app.scanning());
+        // The welcome screen should stay clean rather than reporting on nothing.
+        assert!(app.status.is_none(), "{:?}", app.status);
+    }
+
+    #[test]
+    fn opening_more_files_rescans_once_auto_scan_is_on() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        assert!(!app.scanning());
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(
+            app.scanning(),
+            "findings are global, so adding a file must rescan the corpus"
+        );
+    }
+
+    #[test]
+    fn auto_scan_stays_off_when_it_was_never_enabled() {
+        // The `--no-scan` path: main simply never calls `enable_auto_scan`.
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.open_resolved(&[PathBuf::from("samples/sample.log")]);
+        assert!(app.has_files());
+        assert!(!app.scanning());
+    }
+
+    #[test]
+    fn a_clean_scan_reports_what_it_covered() {
+        let path = tmp_name("clean.log");
+        fs::write(&path, "started up\nall good here\nstill fine\n").unwrap();
+        let mut app = app_with_paths(&[&path.to_string_lossy()]);
+        run_scan_to_completion(&mut app);
+        fs::remove_file(&path).ok();
+
+        assert!(app.findings.is_empty());
+        assert!(!app.show_findings, "a clean scan should not open a panel");
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("nothing notable"), "{status}");
+        assert!(
+            status.contains("3 lines"),
+            "an all-clear should say what it covered: {status}"
+        );
+    }
+
+    #[test]
+    fn a_scan_report_lists_only_reportable_severities() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.starts_with("scan: "), "{status}");
+        assert!(status.contains(" crit"), "{status}");
+        // The third instance of the always-zero counts used to live here.
+        assert!(!status.contains("low"), "{status}");
+        assert!(!status.contains("info"), "{status}");
     }
 
     #[test]

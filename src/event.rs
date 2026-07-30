@@ -404,6 +404,48 @@ mod tests {
         App::new(&["samples/sample.log".into()], Vec::new(), false).unwrap()
     }
 
+    /// The route users actually take: welcome screen, `o` for the browser, mark a
+    /// file, `o` to open. The CLI path is covered in `app`; this covers the one
+    /// where the file is chosen interactively.
+    #[test]
+    fn opening_from_the_browser_starts_a_scan() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+        app.restore_browser_cwd(Some(std::path::PathBuf::from("samples/bundle")));
+        app.enable_auto_scan();
+        assert!(!app.scanning(), "nothing is open yet, so nothing to scan");
+
+        let key = |app: &mut App, c: char| {
+            dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+
+        key(&mut app, 'o');
+        assert_eq!(app.mode, Mode::Browser);
+
+        // Walk past the parent entry to the first real file, mark it, open it.
+        for _ in 0..8 {
+            if !app
+                .browser
+                .selected_entry()
+                .map(|e| e.is_dir)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            key(&mut app, 'j');
+        }
+        key(&mut app, ' ');
+        key(&mut app, 'o');
+
+        assert!(app.has_files(), "the marked file should have opened");
+        assert_eq!(app.mode, Mode::Viewer);
+        assert!(
+            app.scanning(),
+            "opening from the browser must scan too, not just the CLI path"
+        );
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("scanning…"), "{status}");
+    }
+
     #[test]
     fn track_fraction_clamps_and_handles_short_track() {
         let tall = Rect {
