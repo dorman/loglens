@@ -53,7 +53,16 @@ impl Theme {
             marked: Color::Rgb(0x98, 0xC3, 0x79),
             level_error: Color::Rgb(0xE0, 0x6C, 0x75),
             level_warn: Color::Rgb(0xE5, 0xC0, 0x7B),
-            level_info: Color::Rgb(0x61, 0xAF, 0xEF),
+            // Status Quartz, not the accent. INFO is the most numerous line in
+            // any log, and while it wore Signal Blue the brightest value in the
+            // palette was spent on the least interesting content — diluting the
+            // accent that also marks every keycap, active border, caret and
+            // bookmark, and inverting the gradient the system is built on.
+            //
+            // The neutral steps now descend in luminance: Paper White .65 for an
+            // unclassified line, Quartz .44 for one known to be routine, Slate
+            // .23 for debug noise. An INFO line finally recedes into the ground.
+            level_info: Color::Rgb(0xAB, 0xB2, 0xBF),
             level_debug: Color::Rgb(0x7C, 0x83, 0x94),
             // Highlight rotation, handed out in order by `rule_color`.
             //
@@ -151,7 +160,6 @@ fn detect_level(text: &str) -> Option<Level> {
     // don't false-positive, while "ERROR", "[WARN]", "level=info" still match.
     let bytes = text.as_bytes();
     let mut i = 0;
-    let mut best: Option<Level> = None;
     while i < bytes.len() {
         while i < bytes.len() && !bytes[i].is_ascii_alphabetic() {
             i += 1;
@@ -164,40 +172,56 @@ fn detect_level(text: &str) -> Option<Level> {
             break;
         }
         let token = &text[start..i];
+        // The vocabulary spans the formats loglens actually gets handed: syslog
+        // (ALERT/EMERG/NOTICE), Java util.logging (SEVERE/CONFIG/FINE…), and
+        // Windows event logs (Information), alongside the common application
+        // levels. Anything above ERROR in syslog still maps to Error: the tint
+        // scale is four steps by commitment, and a fifth would need a fifth
+        // color the palette does not have.
         let level = if eq_ignore_ascii(token, "ERROR")
             || eq_ignore_ascii(token, "ERR")
             || eq_ignore_ascii(token, "FATAL")
             || eq_ignore_ascii(token, "CRITICAL")
             || eq_ignore_ascii(token, "CRIT")
+            || eq_ignore_ascii(token, "ALERT")
+            || eq_ignore_ascii(token, "EMERG")
+            || eq_ignore_ascii(token, "EMERGENCY")
+            || eq_ignore_ascii(token, "PANIC")
+            || eq_ignore_ascii(token, "SEVERE")
         {
             Some(Level::Error)
         } else if eq_ignore_ascii(token, "WARN") || eq_ignore_ascii(token, "WARNING") {
             Some(Level::Warn)
-        } else if eq_ignore_ascii(token, "INFO") {
+        } else if eq_ignore_ascii(token, "INFO")
+            || eq_ignore_ascii(token, "INFORMATION")
+            || eq_ignore_ascii(token, "NOTICE")
+        {
             Some(Level::Info)
-        } else if eq_ignore_ascii(token, "DEBUG") || eq_ignore_ascii(token, "TRACE") {
+        } else if eq_ignore_ascii(token, "DEBUG")
+            || eq_ignore_ascii(token, "TRACE")
+            || eq_ignore_ascii(token, "VERBOSE")
+            || eq_ignore_ascii(token, "CONFIG")
+            || eq_ignore_ascii(token, "FINE")
+            || eq_ignore_ascii(token, "FINER")
+            || eq_ignore_ascii(token, "FINEST")
+        {
             Some(Level::Debug)
         } else {
             None
         };
+        // First level token wins, rather than the loudest anywhere in the line.
+        //
+        // A level is a *field*, and every format puts it in the prefix; the rest
+        // of the line is message text that may legitimately contain a level word.
+        // Taking the maximum instead meant Android's `SYSTEM_ALERT_WINDOW`
+        // permission — which tokenises to SYSTEM/ALERT/WINDOW — painted an INFO
+        // line as an error, and `DEBUG: caught ERROR and recovered` claimed to be
+        // an error line when it is a debug line describing one.
         if let Some(l) = level {
-            best = Some(match best {
-                None => l,
-                Some(prev) => rank_max(prev, l),
-            });
+            return Some(l);
         }
     }
-    best
-}
-
-fn rank_max(a: Level, b: Level) -> Level {
-    let rank = |l: Level| match l {
-        Level::Error => 3,
-        Level::Warn => 2,
-        Level::Info => 1,
-        Level::Debug => 0,
-    };
-    if rank(b) > rank(a) { b } else { a }
+    None
 }
 
 fn eq_ignore_ascii(a: &str, b: &str) -> bool {
@@ -271,6 +295,72 @@ mod tests {
         assert_eq!(t.rule_color(12), t.rule_color(0));
     }
 
+    /// The formats loglens is actually handed: syslog, Java util.logging and
+    /// Windows event logs, not just the common application levels. `ALERT`
+    /// appears in loglens's own sample data and used to render as body text.
+    #[test]
+    fn detect_level_covers_syslog_java_and_windows_vocabularies() {
+        for t in ["ALERT", "EMERG", "EMERGENCY", "PANIC", "SEVERE"] {
+            assert_eq!(
+                detect_level(&format!("2026 {t} something")),
+                Some(Level::Error),
+                "{t}"
+            );
+        }
+        for t in ["NOTICE", "Information"] {
+            assert_eq!(
+                detect_level(&format!("2026 {t} something")),
+                Some(Level::Info),
+                "{t}"
+            );
+        }
+        for t in ["VERBOSE", "CONFIG", "FINE", "FINER", "FINEST"] {
+            assert_eq!(
+                detect_level(&format!("2026 {t} something")),
+                Some(Level::Debug),
+                "{t}"
+            );
+        }
+        // Still word-tokenised: these must not false-positive.
+        assert_eq!(detect_level("ALERTNESS training"), None);
+        assert_eq!(detect_level("refinement notes"), None);
+    }
+
+    /// The gradient the whole product is built on: an unclassified line sits at
+    /// body brightness, a line known to be routine recedes below it, and debug
+    /// noise recedes further. INFO wearing the accent inverted this.
+    #[test]
+    fn level_tints_descend_in_luminance() {
+        fn lum(c: Color) -> f64 {
+            let Color::Rgb(r, g, b) = c else {
+                panic!("expected rgb")
+            };
+            let f = |v: u8| {
+                let v = v as f64 / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+        }
+        let t = Theme::dark();
+        assert!(
+            lum(t.text) > lum(t.level_info),
+            "an INFO line must recede below an unclassified one"
+        );
+        assert!(
+            lum(t.level_info) > lum(t.level_debug),
+            "debug noise must recede furthest"
+        );
+        // And the accent must stop meaning "routine line".
+        assert_ne!(
+            t.level_info, t.accent,
+            "INFO must not wear the accent reserved for reachable/selected things"
+        );
+    }
+
     #[test]
     fn detect_level_uses_word_tokens() {
         assert_eq!(detect_level("2026 ERROR failed"), Some(Level::Error));
@@ -278,9 +368,25 @@ mod tests {
         assert_eq!(detect_level("INFO ready"), Some(Level::Info));
         assert_eq!(detect_level("DEBUG tick"), Some(Level::Debug));
         assert_eq!(detect_level("no level here"), None);
-        assert_eq!(detect_level("TERROR alert"), None);
-        // Highest severity wins when multiple appear.
-        assert_eq!(detect_level("INFO then ERROR"), Some(Level::Error));
+        // `TERROR` must not match `ERROR`. The companion word was once "alert",
+        // which is now a level token in its own right — the collision was in the
+        // fixture, not the tokeniser.
+        assert_eq!(detect_level("TERROR strikes"), None);
+        assert_eq!(detect_level("2026 ALERT strikes"), Some(Level::Error));
+        // The level is the prefix field, not the loudest word in the message.
+        assert_eq!(detect_level("INFO then ERROR"), Some(Level::Info));
+        assert_eq!(
+            detect_level("DEBUG caught ERROR and recovered"),
+            Some(Level::Debug)
+        );
+        // Regression: Android's SYSTEM_ALERT_WINDOW permission must not repaint
+        // an INFO line as an error (see samples/mbam-android/scan.log).
+        assert_eq!(
+            detect_level(
+                "2026-07-29 INFO permissions=REQUEST_INSTALL_PACKAGES,SYSTEM_ALERT_WINDOW"
+            ),
+            Some(Level::Info)
+        );
     }
 
     #[test]

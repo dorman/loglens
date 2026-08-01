@@ -2190,10 +2190,19 @@ mod tests {
     #[test]
     fn render_line_spans_stays_fast_on_a_long_busy_line() {
         let theme = Theme::dark();
-        let mut line = String::from("2026-07-22 10:00:00 ERROR ");
+        // Deliberately no level token anywhere: `detect_level` returns on the
+        // first one it finds, so a line carrying `ERROR` in its prefix exits
+        // after a few bytes and could not detect a per-span rescan at all. The
+        // worst case for the tint scan is the line that never matches.
+        let mut line = String::from("2026-07-22 10:00:00 ");
         while line.len() < 32 * 1024 {
             line.push_str("connection refused to host xyz; retrying now. ");
         }
+        assert_eq!(
+            crate::theme::level_fg(&line, &theme),
+            theme.text,
+            "the fixture must have no level token, or it exits early"
+        );
         let search = Regex::new("(?i)retrying").unwrap();
 
         let time_it = |search: Option<&Regex>| {
