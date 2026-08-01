@@ -17,7 +17,7 @@
           "oklch(82% 0.121 245.3)",
           "oklch(95% 0.121 245.3)"
         ],
-        "note": "The single accent. Focus, interactivity, selection, progress, and the latent Low severity step all share it."
+        "note": "The single accent. Focus, interactivity, selection, progress, and the latent Low severity step all share it. Deliberately no longer the INFO tint: spending it on the most numerous line in any log diluted the one value meaning 'reachable or currently yours'."
       },
       "panel-graphite": {
         "role": "neutral",
@@ -116,7 +116,8 @@
           "oklch(70% 0.020 263.0)",
           "oklch(82% 0.020 263.0)",
           "oklch(95% 0.020 263.0)"
-        ]
+        ],
+        "note": "The INFO level tint, and the status band's own foreground. Sits between Paper White and Slate Mute so the neutral level steps descend in measured luminance."
       },
       "ink-black": {
         "role": "neutral",
@@ -496,7 +497,7 @@
       "glyphVocabulary": {
         "●": "a scanned severity",
         "◆": "a bookmark",
-        "▸": "the row being acted on (active legend rule, selected setting)",
+        "▸": "a closed group; also the row being acted on (active legend rule, selected setting)",
         "██": "a highlight's color swatch",
         "│": "the gutter rule",
         "‹": "content hidden to the left",
@@ -505,7 +506,8 @@
         "✓": "a marked file",
         "×N": "a repeat count",
         "▌": "the leading edge of work in progress",
-        "░": "the part not yet read"
+        "░": "the part not yet read",
+        "▾": "an open group"
       },
       "latentTokens": "The Low (#61AFEF) and Info (#7C8394) severity steps are defined but latent, and currently rendered nowhere: the shipped signature library contains nothing below Medium, the severity bar skips empty segments, and the panel title, filter tabs, and export header are all derived from FINDING_FILTERS — the single reportable set. Reserved infrastructure, not dead code.",
       "rotationOrder": "Highlight rotation order is a contract: moss, orchid, brass, cyan, rose, mint, periwinkle, lime, tangerine, then coral, amber, azure. The four values that are also semantic elsewhere come last, ranked by how compromised they are, leaving nine clean slots. The clean run's minimum circular hue separation is 107° (was 51°). Enforced by theme::tests::first_rotation_slots_avoid_semantic_colors."
@@ -540,14 +542,14 @@
       "name": "Findings List Row",
       "kind": "custom",
       "refersTo": "severity-badge-crit",
-      "description": "Badge, then title, then a repeat count in the severity's own color (omitted entirely at one hit), then a dim file:line location. Selection is a row wash plus bold, never a border or arrow. Rows are clickable.",
+      "description": "Badge, then title, then a repeat count in the severity's own color (omitted entirely at one hit), then a dim file:line location. Selection is a row wash plus bold, never a border or arrow. Rows are clickable. Rows are two-level: a parent per signature across the corpus, with per-file children revealed on demand. A signature found in only one file shows no marker and no children — it already names its location, so opening it could only repeat the row. Selection is identity-based, so the cursor holds still while rows appear and vanish around it.",
       "html": "<pre class=\"ds-findings\"><span class=\"ds-row ds-row--sel\"><span class=\"ds-badge ds-badge--crit\"> CRIT </span> <span class=\"ds-title\">Encoded PowerShell command</span><span class=\"ds-rep ds-rep--crit\">  ×912</span><span class=\"ds-loc\">  agent.log:4471</span></span>\n<span class=\"ds-row\"><span class=\"ds-badge ds-badge--high\"> HIGH </span> <span class=\"ds-title\">Certificate validation failed</span><span class=\"ds-rep ds-rep--high\">  ×3</span><span class=\"ds-loc\">  update.log:88</span></span>\n<span class=\"ds-row\"><span class=\"ds-badge ds-badge--med\"> MED  </span> <span class=\"ds-title\">System clock moved backwards</span><span class=\"ds-loc\">  system.log:1204</span></span></pre>",
       "css": ".ds-findings { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-row { display: block; } .ds-row:hover { background: #2E3440; cursor: pointer; } .ds-row--sel { background: #2E3440; } .ds-row--sel .ds-title { font-weight: 700; } .ds-badge { color: #14161B; font-weight: 700; } .ds-badge--crit { background: #FF5555; } .ds-badge--high { background: #E88B3D; } .ds-badge--med { background: #E5C07B; } .ds-title { color: #CED3DE; } .ds-rep { font-weight: 700; } .ds-rep--crit { color: #FF5555; } .ds-rep--high { color: #E88B3D; } .ds-loc { color: #7C8394; }"
     },
     {
       "name": "Severity Bar",
       "kind": "custom",
-      "description": "The only quantitative graphic in the product: one cell tall, Critical to Info left to right, each segment floored at one cell so a lone Critical is never rounded away. No axis, no legend, no frame — that restraint is what keeps it out of dashboard territory.",
+      "description": "The only quantitative graphic in the product: one cell tall, Critical to Info left to right, each segment floored at one cell so a lone Critical is never rounded away. No axis, no legend, no frame — that restraint is what keeps it out of dashboard territory. Each band states what it is — `CRIT 3` in Ink Black on the severity's own fill, the badge treatment at bar scale — because the Label-Always Rule has no exemption for graphics. Label and count, then label alone, then bare fill; never a label truncated mid-word. The leading severity takes cells from the widest band below it when it cannot otherwise name itself: the bar is a verdict, not a measurement, and an unlabelled sliver of Alarm Red is the one reading the system must not produce.",
       "html": "<pre class=\"ds-sevbar\"><span class=\"ds-seg ds-seg--crit\">████████</span><span class=\"ds-seg ds-seg--high\">██████████████</span><span class=\"ds-seg ds-seg--med\">██████████████████████</span></pre>",
       "css": ".ds-sevbar { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-seg--crit { color: #FF5555; } .ds-seg--high { color: #E88B3D; } .ds-seg--med { color: #E5C07B; }"
     },
@@ -609,7 +611,7 @@
       "name": "Progress Overlay",
       "kind": "custom",
       "refersTo": "panel-active",
-      "description": "Chunked-work overlay, sized to its own rows rather than a share of the terminal. The bar's length is real progress and its composition is the severity mix found so far — the findings panel's own severity bar, scaled to the scanned length — so the reader watches the verdict assemble before the report opens. A clean scan fills in accent; the first Critical repaints the run in Alarm Red. `▌` marks the boundary between read and unread and `░` carries the remainder; both vanish at 100%. Motion comes only from work actually completing, never a timer. Progress is never shown without an exit.",
+      "description": "Chunked-work overlay, sized to its own rows rather than a share of the terminal. The bar's length is real progress and its composition is the severity mix found so far — the findings panel's own severity bar, scaled to the scanned length — so the reader watches the verdict assemble before the report opens. A clean scan fills in accent; the first Critical repaints the run in Alarm Red. `▌` marks the boundary between read and unread and `░` carries the remainder; both vanish at 100%. Motion comes only from work actually completing, never a timer. Progress is never shown without an exit. Each band states what it is — `CRIT 3` in Ink Black on the severity's own fill, the badge treatment at bar scale — because the Label-Always Rule has no exemption for graphics. Label and count, then label alone, then bare fill; never a label truncated mid-word. The leading severity takes cells from the widest band below it when it cannot otherwise name itself: the bar is a verdict, not a measurement, and an unlabelled sliver of Alarm Red is the one reading the system must not produce.",
       "html": "<pre class=\"ds-progress\"><span class=\"ds-pg-line\">╭</span><span class=\"ds-pg-title\"> Scanning for known-bad signatures… </span><span class=\"ds-pg-line\">────────╮</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-crit\">█████</span><span class=\"ds-pg-high\">█████████</span><span class=\"ds-pg-med\">██████████████</span><span class=\"ds-pg-head\">▌</span><span class=\"ds-pg-track\">░░░░░░░░░░░</span><span class=\"ds-pg-pct\"> 71%</span><span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-text\"> 6390/9000 lines</span><span class=\"ds-pg-dim\">   ·   </span><span class=\"ds-pg-accent\">6 findings so far</span>    <span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">│</span><span class=\"ds-pg-dim\"> agent.log</span><span class=\"ds-pg-dim\">      Esc to cancel</span>               <span class=\"ds-pg-line\">│</span>\n<span class=\"ds-pg-line\">╰────────────────────────────────────────────╯</span></pre>",
       "css": ".ds-progress { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre; background: #14161B; color: #CED3DE; padding: 12px; margin: 0; overflow-x: auto; } .ds-pg-line { color: #61AFEF; } .ds-pg-title { color: #61AFEF; font-weight: 700; } .ds-pg-crit { color: #FF5555; } .ds-pg-high { color: #E88B3D; } .ds-pg-med { color: #E5C07B; } .ds-pg-head { color: #61AFEF; font-weight: 700; } .ds-pg-track { color: #454C5E; } .ds-pg-pct { color: #CED3DE; } .ds-pg-text { color: #CED3DE; } .ds-pg-accent { color: #61AFEF; } .ds-pg-dim { color: #7C8394; }"
     },

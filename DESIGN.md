@@ -260,7 +260,7 @@ The unit is the character cell, and the grid is absolute: every row is exactly o
 
 **Overlays** are centered rects, sized by intent rather than a shared modal scale: findings 84%×84% (the working surface — it earns the most room), browser 74%×76%, input 60%×3 cells. The progress overlay, the settings panel and the help sheet are all sized to their own content in cells instead — a live counter, a setting's explanation, or a keybinding row that truncates mid-word is worse than a narrower panel. The help sheet takes the width its widest row needs, reflows into two columns when both fit (~135 cells), and caps its height at 92% of the terminal, scrolling the remainder. The findings panel subdivides its interior into a 1-cell severity bar, a 1-cell filter-tab row, a `Min(3)` list, and a fixed 5-cell detail box — the detail box never grows, so the list is the only thing that responds to height.
 
-**Responsive behavior** is width-driven and discrete. Below roughly 65 cells of pane width the display banner swaps to its 34-cell variant. The legend is a user toggle (`l`, persisted) rather than an automatic breakpoint — loglens does not decide for the user that their terminal is too small. Scrollbars appear only when content overflows, inset one cell from the panel's top and bottom so they never collide with the border arcs.
+**Responsive behavior** is width-driven and discrete. Below roughly 65 cells of pane width the display banner swaps to its 34-cell variant. The legend's *visibility* stays a user toggle (`l`, persisted) — loglens does not decide for the user that their terminal is too small — but its *width* is responsive: it keeps 34 cells wherever there is room and yields to the log below that, with a floor of 16, the narrowest row that can still carry `██ label kw N`. Fixed at 34 it took a third of a 100-column terminal and half of a 60-column one, often to show a single placeholder sentence. Scrollbars appear only when content overflows, inset one cell from the panel's top and bottom so they never collide with the border arcs.
 
 ### Named Rules
 
@@ -274,11 +274,15 @@ A terminal has no shadows, so depth here is **strictly tonal, in three explicit 
 
 1. **Ground** — the log field and its panels, on the terminal's own background.
 2. **Wash** — Row Wash `#2E3440` on the cursor row and the selected findings row; Status Trench `#1B1F27` on the status band. These read as *nearer* because they are darker and denser than the field, not because they are lifted.
-3. **Punch-out** — overlays clear the cells beneath them outright before drawing. A popup does not float above the viewer; it replaces that region of it. Nothing shows through, and nothing is dimmed behind it.
+3. **Punch-out** — every overlay clears the cells beneath it and then carries the Status Trench fill (`theme.panel_raised`): findings, help, settings, browser, progress and the input prompt all sit at one elevation. An overlay drawing on the terminal's own background is the same tone as the field behind it, leaving the border color to carry the separation alone. Overlays clear the cells beneath them outright before drawing. A popup does not float above the viewer; it replaces that region of it. Nothing shows through, and nothing is dimmed behind it.
+
+The tiers stack rather than merely coexist. The findings panel carries the Status Trench fill (`theme.panel_raised`), so ground → panel → selected row is `#14161B` → `#1B1F27` → `#2E3440`: the panel reads nearer than the log it replaced, and a selected row still reads above the panel holding it. Without the fill an overlay draws on the terminal's own background — the same tone as the field behind it — and the border color is left carrying the whole separation.
 
 Focus is carried by border color rather than by elevation: an active panel borders and titles in Signal Blue, an inactive one in Panel Graphite. That is the only "raised" signal in the system.
 
 ### Named Rules
+
+**The Truncate-With-A-Mark Rule.** Content that does not fit is cut with `…`, never clipped silently, and the end that carries the meaning is the end that survives. A path keeps its tail, because the directory you are standing in is the point and `/private/tmp/claude-501/-Us…` answers nothing; prose keeps its head. In the highlight rail the label is the only elastic part — the count is the reason the rail exists, so it is never what gets dropped.
 
 **The No-Fake-Depth Rule.** Never simulate elevation. No ASCII drop shadows, no offset duplicate borders, no half-block gradients under panels, no dimmed backdrop behind a modal. Three tiers, tonal only. If something needs to feel closer, darken beneath it or give it the accent border.
 
@@ -288,7 +292,7 @@ One container form, one corner language: a full box border in rounded-arc glyphs
 
 Titles are inlaid into the top border rather than placed below it, which buys back a row and makes the frame carry state instead of merely enclosing it. Centered titles are used exactly once, on the help sheet.
 
-The geometric vocabulary is small and each glyph means one thing: `●` a scanned severity, `◆` a bookmark, `▸` the row being acted on (the active legend rule, the selected setting), `██` a highlight's color swatch, `│` the gutter rule, `‹` content hidden to the left, `›` an input prompt, `█` the input caret, `✓` a marked file, `×N` a repeat count, `▌` the leading edge of work in progress, `░` the part not yet read. Emoji appear in exactly one place — `📁`/`📄` in the file browser — and that is the ceiling, not a precedent.
+The geometric vocabulary is small and each glyph means one thing: `●` a scanned severity, `◆` a bookmark, `▸`/`▾` a closed / open group, and the row being acted on (the active legend rule, the selected setting), `██` a highlight's color swatch, `│` the gutter rule, `‹` content hidden to the left, `›` an input prompt, `█` the input caret, `✓` a marked file, `×N` a repeat count, `▌` the leading edge of work in progress, `░` the part not yet read. Emoji appear in exactly one place — `📁`/`📄` in the file browser — and that is the ceiling, not a precedent.
 
 ### Named Rules
 
@@ -328,7 +332,13 @@ The signature component. Fixed left-to-right zones: 2-cell annotation slot → r
 
 ### Severity Bar
 
-A one-cell-tall stacked bar of `█` blocks, Critical to Info left to right, each segment proportional to its share and floored at one cell so a lone Critical is never rounded out of existence. This is the only quantitative graphic in the product, and it is exactly one row tall with no axis, no legend, and no frame — the boundary that separates it from the banned dashboard idiom. Measurement is allowed inline; a panel built around a measurement is not.
+A one-cell-tall stacked bar, Critical to Info left to right, each segment proportional to its share and floored at one cell so a lone Critical is never rounded out of existence. This is the only quantitative graphic in the product, and it is exactly one row tall with no axis, no legend, and no frame — the boundary that separates it from the banned dashboard idiom. Measurement is allowed inline; a panel built around a measurement is not.
+
+**Every band states what it is.** A segment carries `CRIT 3` in Ink Black on its own severity fill — the severity badge's exact treatment at bar scale — because the Label-Always Rule has no exemption for graphics. Space is spent in the order the reader needs it: label and count, then label alone, then bare fill when even that will not fit. A band too narrow to name keeps its fill so the proportion still reads; a label is never truncated mid-word.
+
+**The leading severity always earns its label.** When the worst band present is too narrow to name itself, it takes the cells it needs from the widest band below it. This costs a little proportional accuracy on purpose: the bar is a verdict, not a measurement, and an unlabelled two-cell sliver of Alarm Red is the one reading the system must not produce. The one-cell floor keeps a lone Critical visible; this keeps it legible.
+
+The work bar in the progress overlay is the same component under a progress length, so it inherits all of this — and this is what makes a scan readable on a 256-color terminal, to a colorblind reader, and in a screenshot pasted into a ticket.
 
 ### Severity Filter Tabs
 
@@ -353,6 +363,14 @@ A one-cell-tall stacked bar of `█` blocks, Critical to Info left to right, eac
 
 - **Style:** 60%-wide, 3-cell rounded panel, `›` prompt in Signal Blue, Paper White text, a `█` block caret in Signal Blue.
 - **Title:** states both the task and both exits — ` Add keyword highlight — Enter to go, Esc to cancel `.
+
+### Findings Panel
+
+- **Two levels.** A parent is one row per signature across the whole corpus; children are the per-file evidence beneath it, collapsed by default. On a bundle the summary *is* the answer — "what is wrong with this machine" — and the per-file locations are what you open once you have picked a problem. The scan is unchanged: it already emits the child rows, so a parent is a fold over a contiguous run of them.
+- **A one-file group has no disclosure at all.** It already names its file and line on its own row, so a marker would promise something to open that only repeats the row. `Enter` on it jumps, exactly as it does on a child. This is the Quiet-Default Rule applied to the marker.
+- **Sized to its content**, like every other overlay. The collapsed default caps the list at one row per reportable signature, so the detail box sits directly beneath the row it explains rather than 15–20 blank rows below it. Height is capped at 84% and the list scrolls past that.
+- **The selection is identity, not position.** Expanding inserts rows beneath the cursor and collapsing removes them; a positional selection would slide onto a different finding each time. "Don't let a row move because state changed elsewhere" governs the cursor as much as the rows.
+- **Keys:** `Enter` opens a group or goes to evidence, `h`/`l` fold and unfold, `f`/`F` cycle the severity filter, `j`/`k` move. `p`/`P` in the viewer walk *children*, because a parent spans files and has no single line to put the cursor on.
 
 ### Progress Overlay
 

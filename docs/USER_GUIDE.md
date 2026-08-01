@@ -222,6 +222,12 @@ When a scan finds nothing, no panel opens — the status line reports what was
 covered instead, e.g. `scan complete — nothing notable in 9004 lines across 3
 files`.
 
+Findings are grouped by problem, not by line. Each row is one signature — one
+kind of thing that went wrong — and a row found in more than one file opens with
+`Enter` (or `l`) to show which files, and how many times in each. A row found in
+just one file names that file directly and needs no opening. `e` exports the
+same shape: the explanation once per problem, with a located line per file.
+
 What the library covers: security tampering (protection disabled), encoded
 PowerShell commands, process injection, commonly-abused system binaries
 (LOLBins), clock/time rollback, certificate-validation failures, corrupt
@@ -373,7 +379,8 @@ top/bottom · `:` go to line · `m` bookmark · `M` clear bookmarks ·
 `w` close file · `y` copy cursor line · `Y` copy file path · `q` quit
 
 **Scan** — `S` scan · `s` reopen findings · `p`/`P` next/prev finding (wraps) ·
-`e` export markdown · in panel: `j`/`k` move, `Enter` jump, `e` export,
+`e` export markdown · in panel: `j`/`k` move, `Enter` open a group or jump to
+evidence, `h`/`l` fold/unfold, `f`/`F` severity filter, `e` export,
 `,` settings, `?` help, `q`/`Esc` close
 
 **Search & filter** — `/` search · `f` filter · `Enter` first match ·

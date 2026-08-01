@@ -139,6 +139,42 @@ pub struct Finding {
     pub count: usize,
 }
 
+/// What the findings panel's cursor is on.
+///
+/// Identity rather than a row index: expanding a group inserts rows beneath it
+/// and collapsing removes them, and a positional selection would slide onto a
+/// different finding each time. DESIGN.md's "don't let a row move because state
+/// changed elsewhere" applies to the selection as much as to the rows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FindingSel {
+    /// A signature's summary row, spanning every file it was found in.
+    Parent(usize),
+    /// One (file, signature) group — an index into [`App::findings`].
+    Child(usize),
+}
+
+/// One rendered row of the findings panel, in draw order.
+///
+/// Derived per call from `findings` + `expanded` rather than stored: the scan
+/// already emits exactly the child rows, so a parent is a view over a
+/// contiguous run of them, and a second stored copy could only drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PanelRow {
+    Parent {
+        sig: usize,
+        /// First child, so the row can name a location when collapsed.
+        first: usize,
+        files: usize,
+        hits: usize,
+        /// False when the signature was found in exactly one file: the parent
+        /// already names that location, so opening it would only repeat itself.
+        /// Such a row gets no marker and no children — the Quiet-Default Rule
+        /// applied to disclosure.
+        expandable: bool,
+    },
+    Child(usize),
+}
+
 /// In-progress scan state, advanced a chunk at a time so the UI can show a
 /// live progress bar and stay responsive (cancellable).
 pub struct ScanState {
@@ -201,6 +237,8 @@ pub struct Regions {
     pub legend: Rect,
     /// The scrollbar track column (empty when the file fits on screen).
     pub scrollbar: Rect,
+    /// First visible legend row (for click mapping once the rail scrolls).
+    pub legend_top: usize,
     pub browser: Rect,
     /// Exact rect of the browser's entry list (excludes borders/footer), so
     /// mouse clicks map 1:1 onto entries.
@@ -502,7 +540,11 @@ pub struct App {
     pub findings: Vec<Finding>,
     /// Index into `findings`, not into the filtered view. Keeping it absolute
     /// means jump/step/detail all stay correct while a filter is active.
-    pub findings_sel: usize,
+    pub findings_sel: FindingSel,
+    /// Expanded signature groups, indexed by signature. Collapsed is the
+    /// default: on a bundle the summary is the answer, and the per-file
+    /// evidence is what you open once you have picked a problem.
+    expanded: Vec<bool>,
     /// Severity shown in the panel; `None` shows every finding.
     pub findings_filter: Option<Severity>,
     /// First visible row of the filtered list. Real scroll state rather than a
@@ -520,6 +562,10 @@ pub struct App {
 
     pub show_legend: bool,
     pub show_help: bool,
+    /// First visible legend row. Real scroll state, because `MAX_RULES` is 64
+    /// and the rail is usually shorter than that — without it, rules past the
+    /// visible height are not merely off-screen but unreachable.
+    pub legend_top: usize,
     /// The settings overlay (`,`) and the row the cursor sits on.
     pub show_settings: bool,
     pub settings_sel: usize,
@@ -567,7 +613,8 @@ impl App {
             active_rule: None,
             signatures: Library::builtin(),
             findings: Vec::new(),
-            findings_sel: 0,
+            findings_sel: FindingSel::Parent(0),
+            expanded: Vec::new(),
             findings_filter: None,
             findings_top: 0,
             show_findings: false,
@@ -578,6 +625,7 @@ impl App {
             auto_scan: false,
             show_legend: true,
             show_help: false,
+            legend_top: 0,
             show_settings: false,
             settings_sel: 0,
             help_scroll: 0,
@@ -1660,6 +1708,7 @@ impl App {
         // look empty, so each scan starts showing everything.
         self.findings_filter = None;
         self.findings_top = 0;
+        self.expanded = vec![false; self.signatures.signature_count()];
         let mut total = 0;
         for f in &mut self.files {
             f.scan_severity = vec![None; f.lines.len()];
@@ -1744,16 +1793,20 @@ impl App {
     }
 
     fn finalize_scan(&mut self, mut st: ScanState) {
+        // Severity first, then signature, so every group of one signature is a
+        // contiguous run and `panel_rows` can fold it into a parent without
+        // hashing. File and line order the evidence inside a group.
         st.findings.sort_by(|a, b| {
             self.signatures[b.sig]
                 .severity
                 .cmp(&self.signatures[a.sig].severity)
+                .then(a.sig.cmp(&b.sig))
                 .then(a.file.cmp(&b.file))
                 .then(a.line.cmp(&b.line))
         });
         let total = st.findings.len();
         self.findings = st.findings;
-        self.findings_sel = 0;
+        self.reset_findings_view();
         self.show_findings = total > 0;
         self.scan = None;
 
@@ -1796,7 +1849,7 @@ impl App {
                 f.scan_severity = vec![None; f.lines.len()];
             }
             self.findings.clear();
-            self.findings_sel = 0;
+            self.reset_findings_view();
             self.show_findings = false;
             self.status = Some("scan cancelled".into());
         }
@@ -1874,22 +1927,152 @@ impl App {
         }
     }
 
-    /// Where the selection sits within the filtered list, if it is visible.
-    fn findings_pos(&self, vis: &[usize]) -> Option<usize> {
-        vis.iter().position(|&i| i == self.findings_sel)
+    /// Rows the panel draws, in order: one parent per signature, followed by
+    /// its per-file children when that signature is expanded.
+    ///
+    /// `findings` is sorted severity → signature → file → line, so each
+    /// signature's groups are one contiguous run and this is a single pass.
+    pub fn panel_rows(&self) -> Vec<PanelRow> {
+        let vis = self.visible_findings();
+        let mut rows = Vec::new();
+        let mut i = 0;
+        while i < vis.len() {
+            let sig = self.findings[vis[i]].sig;
+            let mut j = i;
+            let mut hits = 0usize;
+            while j < vis.len() && self.findings[vis[j]].sig == sig {
+                hits += self.findings[vis[j]].count;
+                j += 1;
+            }
+            let files = j - i;
+            let expandable = files > 1;
+            rows.push(PanelRow::Parent {
+                sig,
+                first: vis[i],
+                files,
+                hits,
+                expandable,
+            });
+            if expandable && self.is_expanded(sig) {
+                rows.extend(vis[i..j].iter().map(|&k| PanelRow::Child(k)));
+            }
+            i = j;
+        }
+        rows
     }
 
-    /// Step the selection through the filtered list, clamped at both ends.
+    pub fn is_expanded(&self, sig: usize) -> bool {
+        self.expanded.get(sig).copied().unwrap_or(false)
+    }
+
+    /// Land the cursor on the first row and collapse everything. Called after a
+    /// scan and whenever the visible set changes out from under the selection.
+    fn reset_findings_view(&mut self) {
+        self.findings_top = 0;
+        self.findings_sel = match self.panel_rows().first() {
+            Some(PanelRow::Parent { sig, .. }) => FindingSel::Parent(*sig),
+            Some(PanelRow::Child(i)) => FindingSel::Child(*i),
+            None => FindingSel::Parent(0),
+        };
+    }
+
+    /// Put the cursor on a specific drawn row (mouse click).
+    pub fn select_panel_row(&mut self, row: PanelRow) {
+        self.findings_sel = Self::row_sel(&row);
+    }
+
+    /// Does this row carry the given selection? Used by the renderer, which
+    /// has the rows but not the private mapping.
+    pub fn row_is(row: &PanelRow, sel: FindingSel) -> bool {
+        Self::row_sel(row) == sel
+    }
+
+    /// The finding the detail box should describe: the selected child, or a
+    /// selected parent's first piece of evidence.
+    pub fn selected_finding(&self) -> Option<Finding> {
+        match self.findings_sel {
+            FindingSel::Child(i) => self.findings.get(i).copied(),
+            FindingSel::Parent(sig) => self
+                .visible_findings()
+                .into_iter()
+                .find(|&i| self.findings[i].sig == sig)
+                .and_then(|i| self.findings.get(i).copied()),
+        }
+    }
+
+    fn row_sel(row: &PanelRow) -> FindingSel {
+        match row {
+            PanelRow::Parent { sig, .. } => FindingSel::Parent(*sig),
+            PanelRow::Child(i) => FindingSel::Child(*i),
+        }
+    }
+
+    /// Where the selection sits among the drawn rows, if it is visible.
+    fn findings_pos(&self, rows: &[PanelRow]) -> Option<usize> {
+        rows.iter()
+            .position(|r| Self::row_sel(r) == self.findings_sel)
+    }
+
+    /// Step the selection through the drawn rows, clamped at both ends.
     pub fn findings_move(&mut self, delta: isize) {
-        let vis = self.visible_findings();
-        if vis.is_empty() {
+        let rows = self.panel_rows();
+        if rows.is_empty() {
             return;
         }
         // A selection hidden by the filter counts as being before the first row,
         // so `j` enters the list from the top rather than doing nothing.
-        let pos = self.findings_pos(&vis).unwrap_or(0) as isize;
-        let next = (pos + delta).clamp(0, vis.len() as isize - 1) as usize;
-        self.findings_sel = vis[next];
+        let pos = self.findings_pos(&rows).unwrap_or(0) as isize;
+        let next = (pos + delta).clamp(0, rows.len() as isize - 1) as usize;
+        self.findings_sel = Self::row_sel(&rows[next]);
+    }
+
+    /// `Enter`: open or close a signature, or jump to a file's evidence.
+    ///
+    /// The two levels answer different questions — a parent asks "show me where"
+    /// and a child asks "take me there" — so one key serves both without
+    /// ambiguity, the way the browser's `Enter` descends or opens.
+    pub fn findings_activate(&mut self) {
+        match self.findings_sel {
+            FindingSel::Parent(sig) if self.sig_is_expandable(sig) => {
+                self.set_expanded(sig, !self.is_expanded(sig))
+            }
+            // One file, nothing to open: Enter means "take me there", the same
+            // as it does on a child.
+            _ => self.findings_jump(),
+        }
+    }
+
+    /// Was this signature found in more than one file?
+    fn sig_is_expandable(&self, sig: usize) -> bool {
+        self.visible_findings()
+            .into_iter()
+            .filter(|&i| self.findings[i].sig == sig)
+            .count()
+            > 1
+    }
+
+    /// `l` / `h`. On a child, `h` collapses its parent and selects it, so the
+    /// key always means "go up a level" rather than doing nothing.
+    pub fn findings_set_expanded(&mut self, open: bool) {
+        match self.findings_sel {
+            FindingSel::Parent(sig) if self.sig_is_expandable(sig) => self.set_expanded(sig, open),
+            FindingSel::Parent(_) => {}
+            FindingSel::Child(i) => {
+                if !open {
+                    let sig = self.findings[i].sig;
+                    self.set_expanded(sig, false);
+                    self.findings_sel = FindingSel::Parent(sig);
+                }
+            }
+        }
+    }
+
+    fn set_expanded(&mut self, sig: usize, open: bool) {
+        if sig >= self.expanded.len() {
+            self.expanded
+                .resize(self.signatures.signature_count().max(sig + 1), false);
+        }
+        self.expanded[sig] = open;
     }
 
     /// Cycle the severity filter. `delta` is in tab positions, wrapping.
@@ -1901,36 +2084,37 @@ impl App {
             .unwrap_or(0) as isize;
         self.findings_filter = FINDING_FILTERS[(((cur + delta) % n + n) % n) as usize];
 
+        let shown = self.visible_findings().len();
         // The previous selection may no longer be shown; land on the first row
         // of the new tab so the detail box always matches something visible.
-        let vis = self.visible_findings();
-        if self.findings_pos(&vis).is_none() {
-            self.findings_sel = vis.first().copied().unwrap_or(0);
+        let rows = self.panel_rows();
+        if self.findings_pos(&rows).is_none() {
+            self.reset_findings_view();
         }
         self.findings_top = 0;
         self.status = Some(match self.findings_filter {
             None => format!("findings: all ({})", self.findings.len()),
-            Some(sev) => format!("findings: {} only ({})", sev.label(), vis.len()),
+            Some(sev) => format!("findings: {} only ({})", sev.label(), shown),
         });
     }
 
-    /// Scroll the filtered list the minimum needed to show the selection in a
+    /// Scroll the drawn rows the minimum needed to show the selection in a
     /// window of `height` rows. The renderer owns the height, so it calls this.
     pub fn findings_scroll_into_view(&mut self, height: usize) {
-        let vis = self.visible_findings();
-        if vis.is_empty() || height == 0 {
+        let rows = self.panel_rows();
+        if rows.is_empty() || height == 0 {
             self.findings_top = 0;
             return;
         }
-        let pos = self.findings_pos(&vis).unwrap_or(0);
+        let pos = self.findings_pos(&rows).unwrap_or(0);
         if pos < self.findings_top {
             self.findings_top = pos;
         } else if pos >= self.findings_top + height {
             self.findings_top = pos - height + 1;
         }
         // Never scroll so far that blank rows show below a list that could fill
-        // the window (reachable after switching to a tab with fewer rows).
-        self.findings_top = self.findings_top.min(vis.len().saturating_sub(height));
+        // the window (reachable after collapsing a group or switching tabs).
+        self.findings_top = self.findings_top.min(rows.len().saturating_sub(height));
     }
 
     /// Jump to the next scan finding in severity-ranked order (wraps).
@@ -1963,11 +2147,19 @@ impl App {
             return;
         };
         let n = vis.len();
-        let pos = self.findings_pos(&vis);
-        let selected = self.findings[self.findings_sel];
-        let on_selected = self.current == selected.file
-            && self.file().view.get(self.file().view_pos).copied() == Some(selected.line);
-        self.findings_sel = match pos {
+        // p/P walk children regardless of expand state: a parent spans several
+        // files and so has no single line to put the cursor on.
+        let cur = match self.findings_sel {
+            FindingSel::Child(i) => Some(i),
+            FindingSel::Parent(sig) => vis.iter().copied().find(|&i| self.findings[i].sig == sig),
+        };
+        let pos = cur.and_then(|i| vis.iter().position(|&v| v == i));
+        let on_selected = cur.is_some_and(|i| {
+            let f = self.findings[i];
+            self.current == f.file
+                && self.file().view.get(self.file().view_pos).copied() == Some(f.line)
+        });
+        let next = match pos {
             // Selection is hidden by the filter: enter the visible list rather
             // than stepping from a row that is not on screen.
             None => first,
@@ -1980,7 +2172,11 @@ impl App {
             }
             Some(p) => vis[p],
         };
-        let f = self.findings[self.findings_sel];
+        self.findings_sel = FindingSel::Child(next);
+        // Opening the group keeps the panel honest about where the cursor is,
+        // so reopening with `s` shows the row p/P last landed on.
+        let f = self.findings[next];
+        self.set_expanded(f.sig, true);
         self.show_findings = false;
         self.jump_to_line(f.file, f.line);
         let sig = &self.signatures[f.sig];
@@ -1989,9 +2185,10 @@ impl App {
             .get(f.file)
             .map(|file| file.name.as_str())
             .unwrap_or("?");
+        let at = vis.iter().position(|&v| v == next).unwrap_or(0) + 1;
         self.status = Some(format!(
             "finding {}/{} · {} · {} · {}:{}",
-            self.findings_sel + 1,
+            at,
             n,
             sig.severity.label(),
             sig.title,
@@ -2002,7 +2199,16 @@ impl App {
 
     /// Jump to the selected finding and close the panel.
     pub fn findings_jump(&mut self) {
-        if let Some(f) = self.findings.get(self.findings_sel).copied() {
+        // A parent spans files, so jumping from one lands on its first piece of
+        // evidence — the same row a collapsed parent already names.
+        let idx = match self.findings_sel {
+            FindingSel::Child(i) => Some(i),
+            FindingSel::Parent(sig) => self
+                .visible_findings()
+                .into_iter()
+                .find(|&i| self.findings[i].sig == sig),
+        };
+        if let Some(f) = idx.and_then(|i| self.findings.get(i)).copied() {
             self.show_findings = false;
             self.jump_to_line(f.file, f.line);
         }
@@ -2041,7 +2247,7 @@ impl App {
         self.show_findings = !self.show_findings;
         if self.show_findings {
             self.status = Some(format!(
-                "findings ({}) — e export · Enter jump · q close",
+                "findings ({}) — Enter open/jump · h/l fold · e export · q close",
                 self.findings.len()
             ));
         }
@@ -2116,48 +2322,86 @@ impl App {
             self.findings.len(),
             severity_tally(c),
         ));
-        for (i, f) in self.findings.iter().enumerate() {
-            let sig = &self.signatures[f.sig];
-            let file_name = self
-                .files
-                .get(f.file)
-                .map(|lf| lf.name.as_str())
-                .unwrap_or("?");
-            let excerpt = self
-                .files
-                .get(f.file)
-                .and_then(|lf| lf.lines.get(f.line))
-                .map(|l| {
-                    let trimmed = l.trim();
-                    let truncated: String = trimmed.chars().take(240).collect();
-                    if trimmed.chars().count() > 240 {
-                        format!("{truncated}…")
-                    } else {
-                        truncated
-                    }
-                })
-                .unwrap_or_default();
+        // One section per signature, mirroring the panel: the explanation is
+        // the problem's, so it is stated once, and each file it was found in
+        // contributes a located line of evidence beneath it.
+        let mut i = 0usize;
+        let mut n = 0usize;
+        while i < self.findings.len() {
+            let sig_idx = self.findings[i].sig;
+            let mut j = i;
+            let mut hits = 0usize;
+            while j < self.findings.len() && self.findings[j].sig == sig_idx {
+                hits += self.findings[j].count;
+                j += 1;
+            }
+            let sig = &self.signatures[sig_idx];
+            let files = j - i;
+            n += 1;
             out.push_str(&format!(
                 "## {}. {} — {}\n",
-                i + 1,
+                n,
                 sig.severity.label(),
                 sig.title
             ));
-            out.push_str(&format!("- **location:** `{file_name}:{}`\n", f.line + 1));
             out.push_str(&format!("- **category:** {}\n", sig.category));
-            if f.count > 1 {
+            out.push_str(&format!("- **why:** {}\n", sig.explain));
+
+            // A one-file problem states its location on its own line; only a
+            // problem that spans files needs a spread and a list beneath it.
+            if files > 1 {
                 out.push_str(&format!(
-                    "- **occurrences:** {} (lines {}–{})\n",
-                    f.count,
-                    f.line + 1,
-                    f.last + 1
+                    "- **found in:** {files} files · {hits} matching lines\n\n"
                 ));
             }
-            out.push_str(&format!("- **why:** {}\n", sig.explain));
-            if !excerpt.is_empty() {
-                out.push_str(&format!("- **line:** `{excerpt}`\n"));
+
+            for f in &self.findings[i..j] {
+                let file_name = self
+                    .files
+                    .get(f.file)
+                    .map(|lf| lf.name.as_str())
+                    .unwrap_or("?");
+                let excerpt = self
+                    .files
+                    .get(f.file)
+                    .and_then(|lf| lf.lines.get(f.line))
+                    .map(|l| {
+                        let trimmed = l.trim();
+                        let truncated: String = trimmed.chars().take(240).collect();
+                        if trimmed.chars().count() > 240 {
+                            format!("{truncated}…")
+                        } else {
+                            truncated
+                        }
+                    })
+                    .unwrap_or_default();
+                let occurrences = if f.count > 1 {
+                    format!(
+                        " — {} occurrences (lines {}–{})",
+                        f.count,
+                        f.line + 1,
+                        f.last + 1
+                    )
+                } else {
+                    String::new()
+                };
+                if files > 1 {
+                    out.push_str(&format!("- `{file_name}:{}`{occurrences}\n", f.line + 1));
+                    if !excerpt.is_empty() {
+                        out.push_str(&format!("  `{excerpt}`\n"));
+                    }
+                } else {
+                    out.push_str(&format!(
+                        "- **location:** `{file_name}:{}`{occurrences}\n",
+                        f.line + 1
+                    ));
+                    if !excerpt.is_empty() {
+                        out.push_str(&format!("- **line:** `{excerpt}`\n"));
+                    }
+                }
             }
             out.push('\n');
+            i = j;
         }
         out
     }
@@ -2200,7 +2444,9 @@ impl App {
         if self.findings.is_empty() {
             self.show_findings = false;
         }
-        self.findings_sel = self.findings_sel.min(self.findings.len().saturating_sub(1));
+        // Closing a file drops its findings and renumbers the rest, so any
+        // held index is stale — land on the first row rather than guess.
+        self.reset_findings_view();
 
         if self.current >= self.files.len() {
             self.current = self.files.len().saturating_sub(1);
@@ -2288,6 +2534,32 @@ impl App {
         let state = if self.scan_on_open { "on" } else { "off" };
         let persist = self.persist_prefs();
         self.status = Some(format!("scan on open: {state}{persist}"));
+    }
+
+    /// Scroll the highlight legend, clamped to its content. `rows` and `height`
+    /// are render-time facts, so the renderer supplies them.
+    pub fn legend_clamp_scroll(&mut self, rows: usize, height: usize) {
+        self.legend_top = self.legend_top.min(rows.saturating_sub(height));
+    }
+
+    pub fn legend_scroll_by(&mut self, delta: isize) {
+        let next = self.legend_top as isize + delta;
+        self.legend_top = next.max(0) as usize;
+    }
+
+    /// Keep the active rule in view when the user steps through it with clicks.
+    pub fn legend_scroll_into_view(&mut self, height: usize) {
+        let Some(active) = self.active_rule else {
+            return;
+        };
+        if height == 0 {
+            return;
+        }
+        if active < self.legend_top {
+            self.legend_top = active;
+        } else if active >= self.legend_top + height {
+            self.legend_top = active - height + 1;
+        }
     }
 
     pub fn toggle_settings(&mut self) {
@@ -2839,7 +3111,11 @@ mod tests {
                     );
                     // The selection always addresses something on screen.
                     if !vis.is_empty() {
-                        assert!(vis.contains(&app.findings_sel));
+                        let rows = app.panel_rows();
+                        assert!(
+                            rows.iter().any(|r| App::row_is(r, app.findings_sel)),
+                            "selection must be a drawn row"
+                        );
                     }
                 }
             }
@@ -2870,34 +3146,38 @@ mod tests {
                 count: 1,
             })
             .collect();
-        app.findings_sel = 0;
+        // All 50 share one signature, so they are one group: open it, or the
+        // panel draws a single collapsed row and there is nothing to scroll.
+        app.set_expanded(sig, true);
+        app.findings_sel = FindingSel::Child(0);
         app.findings_top = 0;
+        // Row 0 is the parent, so child `i` draws at row `i + 1`.
 
         app.findings_scroll_into_view(10);
         assert_eq!(app.findings_top, 0, "selection already visible: no scroll");
 
-        app.findings_sel = 10;
+        app.findings_sel = FindingSel::Child(10);
         app.findings_scroll_into_view(10);
         assert_eq!(
-            app.findings_top, 1,
+            app.findings_top, 2,
             "one row past the bottom scrolls by one"
         );
 
-        app.findings_sel = 30;
+        app.findings_sel = FindingSel::Child(30);
         app.findings_scroll_into_view(10);
-        assert_eq!(app.findings_top, 21);
+        assert_eq!(app.findings_top, 22);
 
-        app.findings_sel = 20;
+        app.findings_sel = FindingSel::Child(20);
         app.findings_scroll_into_view(10);
         assert_eq!(
-            app.findings_top, 20,
+            app.findings_top, 21,
             "scrolling back up also moves minimally"
         );
 
-        app.findings_sel = 49;
+        app.findings_sel = FindingSel::Child(49);
         app.findings_scroll_into_view(10);
         assert_eq!(
-            app.findings_top, 40,
+            app.findings_top, 41,
             "last row must not leave blank rows below"
         );
     }
@@ -2986,6 +3266,118 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// Every group of one signature folds into exactly one parent, and the
+    /// parent's totals are the sum of the evidence beneath it.
+    #[test]
+    fn panel_rows_fold_a_signature_into_one_parent() {
+        let mut app = app_with_paths(&["samples/bundle"]);
+        run_scan_to_completion(&mut app);
+        assert!(!app.findings.is_empty());
+
+        for row in app.panel_rows() {
+            let PanelRow::Parent {
+                sig, files, hits, ..
+            } = row
+            else {
+                continue;
+            };
+            let mine: Vec<&Finding> = app.findings.iter().filter(|f| f.sig == sig).collect();
+            assert_eq!(files, mine.len(), "parent must count its own files");
+            assert_eq!(
+                hits,
+                mine.iter().map(|f| f.count).sum::<usize>(),
+                "parent hits must be the sum of its children"
+            );
+        }
+    }
+
+    /// A signature found in one file already names that file on its own row, so
+    /// opening it could only repeat the row. It gets no disclosure at all —
+    /// the Quiet-Default Rule applied to the marker.
+    #[test]
+    fn single_file_groups_offer_no_disclosure() {
+        let mut app = app_with_paths(&["samples/sample.log"]);
+        run_scan_to_completion(&mut app);
+        let rows = app.panel_rows();
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter().all(|r| matches!(r, PanelRow::Parent { .. })),
+            "one file cannot produce a multi-file group"
+        );
+        for row in &rows {
+            if let PanelRow::Parent {
+                files, expandable, ..
+            } = row
+            {
+                assert_eq!(*expandable, *files > 1);
+            }
+        }
+
+        // Enter on a one-file group goes to the evidence instead of toggling.
+        let PanelRow::Parent { sig, .. } = rows[0] else {
+            unreachable!()
+        };
+        app.findings_sel = FindingSel::Parent(sig);
+        app.findings_activate();
+        assert!(!app.show_findings, "Enter should have jumped, not expanded");
+        assert!(!app.is_expanded(sig));
+    }
+
+    /// Expanding shows one row per file, and the selection is identity-based so
+    /// it stays on the same finding while rows appear and vanish around it.
+    #[test]
+    fn expanding_reveals_evidence_without_moving_the_selection() {
+        let mut app = app_with_paths(&["samples/bundle"]);
+        run_scan_to_completion(&mut app);
+
+        let multi = app.panel_rows().into_iter().find_map(|r| match r {
+            PanelRow::Parent {
+                sig,
+                files,
+                expandable: true,
+                ..
+            } => Some((sig, files)),
+            _ => None,
+        });
+        let Some((sig, files)) = multi else {
+            panic!("the bundle should contain one signature spanning files");
+        };
+
+        let collapsed = app.panel_rows().len();
+        app.findings_sel = FindingSel::Parent(sig);
+        app.findings_activate();
+        let opened = app.panel_rows();
+        assert_eq!(
+            opened.len(),
+            collapsed + files,
+            "expanding adds exactly one row per file"
+        );
+        assert_eq!(
+            app.findings_sel,
+            FindingSel::Parent(sig),
+            "the cursor must not slide when rows appear beneath it"
+        );
+        // Children carry real, distinct locations.
+        let kids: Vec<usize> = opened
+            .iter()
+            .filter_map(|r| match r {
+                PanelRow::Child(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kids.len(), files);
+        let mut seen: Vec<usize> = kids.iter().map(|&i| app.findings[i].file).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), files, "each child must be a different file");
+
+        // h from a child collapses the group and lands on the parent.
+        app.findings_sel = FindingSel::Child(kids[1]);
+        app.findings_set_expanded(false);
+        assert_eq!(app.findings_sel, FindingSel::Parent(sig));
+        assert_eq!(app.panel_rows().len(), collapsed);
+    }
+
     #[test]
     fn scan_ranks_findings_by_severity_then_location() {
         let mut app = app_with_paths(&["samples/sample.log"]);
@@ -2997,13 +3389,33 @@ mod tests {
             let sa = app.signatures[a.sig].severity;
             let sb = app.signatures[b.sig].severity;
             assert!(sa >= sb, "findings must be sorted high→low severity");
+            // Signature is the second key so each group is one contiguous run —
+            // `panel_rows` folds a run into a parent in a single pass and would
+            // emit duplicate parents if equal-severity signatures interleaved.
             if sa == sb {
-                assert!(
-                    (a.file, a.line) <= (b.file, b.line),
-                    "equal severity must keep file/line order"
-                );
+                assert!(a.sig <= b.sig, "equal severity must group by signature");
+                if a.sig == b.sig {
+                    assert!(
+                        (a.file, a.line) <= (b.file, b.line),
+                        "within a signature, evidence keeps file/line order"
+                    );
+                }
             }
         }
+
+        // Every signature appears exactly once as a parent.
+        let rows = app.panel_rows();
+        let parents: Vec<usize> = rows
+            .iter()
+            .filter_map(|r| match r {
+                PanelRow::Parent { sig, .. } => Some(*sig),
+                PanelRow::Child(_) => None,
+            })
+            .collect();
+        let mut uniq = parents.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(parents.len(), uniq.len(), "a signature got two parent rows");
         // Sample contains known High/Critical-class signals.
         let counts = app.severity_counts();
         assert!(
@@ -3087,7 +3499,7 @@ mod tests {
         let first = app.findings[0];
         app.next_finding();
         assert!(!app.show_findings);
-        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.findings_sel, FindingSel::Child(0));
         assert_eq!(app.current, first.file);
         assert_eq!(app.file().view[app.file().view_pos], first.line);
         assert!(
@@ -3101,16 +3513,16 @@ mod tests {
 
         // Second press advances; from the last finding, wrap back to first.
         app.next_finding();
-        assert_eq!(app.findings_sel, 1);
-        app.findings_sel = n - 1;
+        assert_eq!(app.findings_sel, FindingSel::Child(1));
+        app.findings_sel = FindingSel::Child(n - 1);
         app.findings_jump();
         app.next_finding();
-        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.findings_sel, FindingSel::Child(0));
         assert_eq!(app.file().view[app.file().view_pos], app.findings[0].line);
 
         // prev from first wraps to last.
         app.prev_finding();
-        assert_eq!(app.findings_sel, n - 1);
+        assert_eq!(app.findings_sel, FindingSel::Child(n - 1));
         assert!(
             app.status
                 .as_deref()
@@ -3179,7 +3591,52 @@ mod tests {
             "export should include severity labels"
         );
         assert!(text.contains("**why:**"));
-        assert!(text.contains("**location:**"));
+        assert!(text.contains("**category:**"), "{text}");
+        // One file, so every problem states its location outright — the export
+        // mirrors the panel, where a one-file group has nothing to open.
+        assert!(text.contains("**location:**"), "{text}");
+        assert!(
+            !text.contains("**found in:**"),
+            "a single-file corpus has no spread to report: {text}"
+        );
+    }
+
+    /// A problem spanning files reports the spread once and lists each file's
+    /// evidence beneath it, instead of repeating the explanation per file.
+    #[test]
+    fn export_groups_a_multi_file_problem_under_one_heading() {
+        let mut app = app_with_paths(&["samples/bundle"]);
+        run_scan_to_completion(&mut app);
+        let text = app.format_findings_markdown();
+
+        let spans_files = app.panel_rows().into_iter().any(|r| {
+            matches!(
+                r,
+                PanelRow::Parent {
+                    expandable: true,
+                    ..
+                }
+            )
+        });
+        assert!(
+            spans_files,
+            "the bundle should contain a multi-file problem"
+        );
+        assert!(text.contains("**found in:**"), "{text}");
+        assert!(text.contains(" files · "), "{text}");
+
+        // The explanation appears once per problem, never once per file.
+        for sig in 0..app.signatures.signature_count() {
+            let n = app.findings.iter().filter(|f| f.sig == sig).count();
+            if n > 1 {
+                let explain = app.signatures[sig].explain;
+                assert_eq!(
+                    text.matches(explain).count(),
+                    1,
+                    "explanation repeated per file for signature {sig}"
+                );
+            }
+        }
     }
 
     /// `e` must never clobber an earlier export: it steps to the next free
@@ -3232,11 +3689,12 @@ mod tests {
             .copied()
             .find(|f| !app.files[f.file].lines[f.line].contains("Quarantine"))
             .expect("need a non-quarantine finding");
-        app.findings_sel = app
-            .findings
-            .iter()
-            .position(|f| f.file == target.file && f.line == target.line)
-            .unwrap();
+        app.findings_sel = FindingSel::Child(
+            app.findings
+                .iter()
+                .position(|f| f.file == target.file && f.line == target.line)
+                .unwrap(),
+        );
         app.findings_jump();
         assert!(!app.filter_on, "jump must defeat a hiding filter");
         assert_eq!(app.file().view[app.file().view_pos], target.line);
@@ -4225,6 +4683,46 @@ mod tests {
             std::env::remove_var("LOGLENS_CONFIG_DIR");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `MAX_RULES` is 64 and the rail is usually shorter, so without real
+    /// scroll state the rules past the fold were not merely off-screen — they
+    /// were unreachable, with nothing on screen saying they existed.
+    #[test]
+    fn legend_scrolls_past_its_visible_height() {
+        let mut app = App::new(&[], Vec::new(), false).unwrap();
+
+        // 30 rules in a 10-row rail.
+        app.legend_clamp_scroll(30, 10);
+        assert_eq!(app.legend_top, 0);
+
+        app.legend_scroll_by(5);
+        app.legend_clamp_scroll(30, 10);
+        assert_eq!(app.legend_top, 5);
+
+        // Cannot scroll past the last full screenful.
+        app.legend_scroll_by(100);
+        app.legend_clamp_scroll(30, 10);
+        assert_eq!(app.legend_top, 20, "no blank rows below the last rule");
+
+        // Nor above the first.
+        app.legend_scroll_by(-100);
+        app.legend_clamp_scroll(30, 10);
+        assert_eq!(app.legend_top, 0);
+
+        // Clicking a rule below the fold brings it into view.
+        app.active_rule = Some(27);
+        app.legend_scroll_into_view(10);
+        assert!(
+            (app.legend_top..app.legend_top + 10).contains(&27),
+            "active rule must be on screen, top={}",
+            app.legend_top
+        );
+
+        // A rail taller than its content never scrolls.
+        app.legend_scroll_by(9);
+        app.legend_clamp_scroll(4, 10);
+        assert_eq!(app.legend_top, 0);
     }
 
     #[test]

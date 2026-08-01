@@ -98,6 +98,22 @@ impl Theme {
         self.palette[index % self.palette.len()]
     }
 
+    /// An active panel that also sits on the Status Trench fill, so it reads as
+    /// *nearer* than the field it punched out of.
+    ///
+    /// This is tier 2 of the elevation scale, not a simulated lift: the panel is
+    /// closer because it is darker and denser than the ground, exactly as the
+    /// cursor row and the status band are. Without it an overlay draws on the
+    /// terminal's own background — the same tone as the log behind it — and the
+    /// border color is left carrying the separation alone.
+    ///
+    /// The three tiers stack: ground `#14161B` → panel `#1B1F27` → row wash
+    /// `#2E3440`, so a selected row still reads above the panel holding it.
+    pub fn panel_raised(&self, title: &str) -> Block<'static> {
+        self.panel(title, true)
+            .style(Style::default().bg(self.status_bg))
+    }
+
     /// Rounded panel. `active` panels get an accent border + title.
     pub fn panel(&self, title: &str, active: bool) -> Block<'static> {
         let border_color = if active { self.accent } else { self.border };
@@ -379,8 +395,8 @@ mod tests {
             detect_level("DEBUG caught ERROR and recovered"),
             Some(Level::Debug)
         );
-        // Regression: Android's SYSTEM_ALERT_WINDOW permission must not repaint
-        // an INFO line as an error (see samples/mbam-android/scan.log).
+        // Regression: Android's SYSTEM_ALERT_WINDOW permission tokenises to
+        // SYSTEM/ALERT/WINDOW, and must not repaint an INFO line as an error.
         assert_eq!(
             detect_level(
                 "2026-07-29 INFO permissions=REQUEST_INSTALL_PACKAGES,SYSTEM_ALERT_WINDOW"

@@ -10,7 +10,8 @@ use ratatui::widgets::{
 use regex::Regex;
 
 use crate::app::{
-    App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, SETTINGS, Setting, severity_tally,
+    App, FINDING_FILTERS, InputKind, LogFile, MatchSpan, Mode, PanelRow, SETTINGS, Setting,
+    severity_tally,
 };
 use crate::rules::Rule;
 use crate::signatures::Severity;
@@ -70,16 +71,13 @@ fn work_bar(theme: &Theme, counts: Option<[usize; 5]>, frac: f64, width: u16) ->
     if segments.is_empty() {
         if filled > 0 {
             spans.push(Span::styled(
-                "\u{2588}".repeat(filled as usize),
-                Style::default().fg(theme.accent),
+                " ".repeat(filled as usize),
+                Style::default().bg(theme.accent),
             ));
         }
     } else {
-        for (sev, seg) in segments {
-            spans.push(Span::styled(
-                "\u{2588}".repeat(seg),
-                Style::default().fg(sev.color()),
-            ));
+        for (sev, cells, count) in segments {
+            spans.push(severity_segment_span(theme, sev, cells, count));
         }
     }
 
@@ -136,7 +134,7 @@ fn draw_work_progress(frame: &mut Frame, theme: &Theme, area: Rect, work: WorkPr
         .max(sub.width() as u16 + 1)
         .max(title.chars().count() as u16 + 2);
     let rect = centered_rect_cells(area, content.saturating_add(2), 5);
-    let block = theme.panel(title, true);
+    let block = theme.panel_raised(title);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
@@ -326,7 +324,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows_tall = SETTINGS.len() as u16;
     // pad · rows · pad · detail · pad · footer
     let rect = centered_rect_cells(area, content.saturating_add(2), rows_tall + 7);
-    let block = t.panel(TITLE, true);
+    let block = t.panel_raised(TITLE);
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
@@ -385,7 +383,7 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Shared by the findings panel's severity bar and the progress overlay's work
 /// bar: same proportions, same order, same one-cell floor — the second is the
 /// first scaled to however much of the corpus has been read.
-fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize)> {
+fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize, usize)> {
     let total: usize = counts.iter().sum();
     if total == 0 || width == 0 {
         return Vec::new();
@@ -413,7 +411,7 @@ fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize)> {
         if seg == 0 {
             break;
         }
-        segments.push((sev, seg));
+        segments.push((sev, seg, c));
         used += seg;
     }
     // Rounding can leave the run a cell or two short of `width`. Give the
@@ -424,14 +422,85 @@ fn severity_segments(counts: [usize; 5], width: u16) -> Vec<(Severity, usize)> {
     {
         last.1 += w - used;
     }
+
+    // The worst thing found is never too small to say its own name. The
+    // one-cell floor already keeps a lone Critical visible; this extends the
+    // same principle from visible to *named*, buying the leading segment enough
+    // room for its label out of the widest one below it.
+    //
+    // It costs a little proportional accuracy, deliberately: this bar is a
+    // verdict, not a measurement, and a two-cell red sliver that cannot identify
+    // itself is the one reading the system must not allow.
+    if segments.len() > 1 {
+        let need = segments[0].0.label().chars().count() + 2;
+        if segments[0].1 < need {
+            let deficit = need - segments[0].1;
+            let donor = segments
+                .iter()
+                .enumerate()
+                .skip(1)
+                .max_by_key(|(_, seg)| seg.1)
+                .map(|(i, _)| i);
+            if let Some(d) = donor
+                && segments[d].1 > deficit
+            {
+                segments[d].1 -= deficit;
+                segments[0].1 += deficit;
+            }
+        }
+    }
     segments
 }
 
-/// A one-line stacked bar depicting the severity mix of the findings.
-fn severity_bar(counts: [usize; 5], width: u16) -> Line<'static> {
+/// One segment of a severity bar, labelled with as much of `CRIT 3` as it can
+/// hold, in Ink Black on the severity's own fill.
+///
+/// This is the badge treatment at bar scale, and it is deliberate: every other
+/// colored thing in loglens is paired with a word — badges, tabs, highlights,
+/// search matches, filter tabs — and the bars were the only components that
+/// opted out. A bar whose sole channel is hue says nothing on a 256-color
+/// terminal, to a colorblind reader, or in a screenshot pasted into a ticket.
+///
+/// Space is spent in the order the reader needs it: label and count, then label
+/// alone, then bare fill when even that will not fit. A segment never shrinks
+/// below the one-cell floor, so a lone Critical is always visible even when it
+/// is too narrow to name itself.
+fn severity_segment_span(t: &Theme, sev: Severity, cells: usize, count: usize) -> Span<'static> {
+    let filled = Style::default()
+        .fg(t.match_fg)
+        .bg(sev.color())
+        .add_modifier(Modifier::BOLD);
+    let label = sev.label();
+    let full = format!("{label} {count}");
+
+    // ` CRIT 3 ` needs the text plus a cell of breathing room each side, the
+    // same padding the severity badge uses.
+    if cells >= full.chars().count() + 2 {
+        let pad = cells - full.chars().count();
+        let left = pad / 2;
+        Span::styled(
+            format!("{:l$}{full}{:r$}", "", "", l = left, r = pad - left),
+            filled,
+        )
+    } else if cells >= label.chars().count() + 2 {
+        let pad = cells - label.chars().count();
+        let left = pad / 2;
+        Span::styled(
+            format!("{:l$}{label}{:r$}", "", "", l = left, r = pad - left),
+            filled,
+        )
+    } else {
+        // Too narrow to name: fill only, so the proportion still reads.
+        Span::styled(" ".repeat(cells), Style::default().bg(sev.color()))
+    }
+}
+
+/// A one-line stacked bar depicting the severity mix of the findings, each
+/// segment stating what it is.
+fn severity_bar(t: &Theme, counts: [usize; 5], width: u16) -> Line<'static> {
     let spans = severity_segments(counts, width)
         .into_iter()
-        .map(|(sev, seg)| Span::styled("\u{2588}".repeat(seg), Style::default().fg(sev.color())))
+        .map(|(sev, cells, count)| severity_segment_span(t, sev, cells, count))
         .collect::<Vec<_>>();
     Line::from(spans)
 }
@@ -464,7 +533,10 @@ fn draw_viewer(frame: &mut Frame, app: &mut App, area: Rect) {
     let status_area = chunks[idx];
 
     let body_constraints = if app.show_legend {
-        vec![Constraint::Min(20), Constraint::Length(34)]
+        vec![
+            Constraint::Min(20),
+            Constraint::Length(legend_width(area.width)),
+        ]
     } else {
         vec![Constraint::Min(20)]
     };
@@ -914,42 +986,149 @@ fn log_title(app: &App, file: &LogFile) -> String {
     title
 }
 
-fn draw_legend(frame: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let mut items: Vec<ListItem> = Vec::new();
-    if app.rules.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "  no highlights yet — press a",
-            Style::default().fg(t.text_dim),
-        ))));
+/// Fit `text` into `width` cells, marking the cut with `…` rather than letting
+/// the terminal clip mid-word.
+///
+/// `keep_tail` decides which end survives. A path keeps its tail — the
+/// directory you are actually in is the point, and `/private/tmp/claude-501/-Us…`
+/// answers nothing — while prose keeps its head.
+fn fit(text: &str, width: usize, keep_tail: bool) -> String {
+    let n = text.chars().count();
+    if n <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "\u{2026}".chars().take(width).collect();
+    }
+    if keep_tail {
+        let skip = n - (width - 1);
+        std::iter::once('\u{2026}')
+            .chain(text.chars().skip(skip))
+            .collect()
     } else {
-        for (i, rule) in app.rules.iter().enumerate() {
-            // Prefer `.get` so a transient rules/counts mismatch (e.g. mid
-            // chunked rescan) cannot panic the render path.
-            let count = if app.has_files() {
-                app.file().rule_counts.get(i).copied().unwrap_or(0)
-            } else {
-                0
-            };
-            let active = app.active_rule == Some(i);
-            let marker = if active { "\u{25B8} " } else { "  " };
-            let kind = if rule.is_regex { "re" } else { "kw" };
-            let label_style = if active {
-                Style::default().fg(t.text).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.text)
-            };
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(marker, Style::default().fg(t.accent)),
-                Span::styled("\u{2588}\u{2588} ", Style::default().fg(rule.color)),
-                Span::styled(format!("{} ", rule.label), label_style),
-                Span::styled(format!("{kind} {count}"), Style::default().fg(t.text_dim)),
-            ])));
-        }
+        text.chars()
+            .take(width - 1)
+            .chain(std::iter::once('\u{2026}'))
+            .collect()
+    }
+}
+
+/// Width of the highlight rail for a given terminal width.
+///
+/// Fixed at 34 cells, the rail took a third of a 100-column terminal and *half*
+/// of a 60-column one — 32 of 60 cells to show a single placeholder sentence.
+/// It now keeps its full width wherever there is room for it and yields to the
+/// log below that, with a floor at the narrowest row that can still carry
+/// `██ label kw N`.
+fn legend_width(total: u16) -> u16 {
+    const MAX: u16 = 34;
+    const MIN: u16 = 16;
+    // Widen for the multiply: `width * 2` overflows u16 on absurd terminals.
+    let share = (total as u32 * 2 / 5) as u16;
+    share.clamp(MIN, MAX)
+}
+
+/// One legend row. The label is the only elastic part: the count is the reason
+/// the rail exists, so it is never the thing that gets clipped.
+fn legend_row(t: &Theme, rule: &Rule, count: usize, active: bool, width: u16) -> Line<'static> {
+    let marker = if active { "\u{25B8} " } else { "  " };
+    let kind = if rule.is_regex { "re" } else { "kw" };
+    let tail = format!("{kind} {count}");
+    // marker(2) + swatch(3) + one space before the tail.
+    let fixed = 2 + 3 + 1 + tail.chars().count();
+    let room = (width as usize).saturating_sub(fixed);
+
+    let label: String = if rule.label.chars().count() <= room {
+        rule.label.clone()
+    } else if room >= 2 {
+        // Truncate the label, never the count, and say that it was truncated.
+        let keep = room - 1;
+        rule.label
+            .chars()
+            .take(keep)
+            .chain(std::iter::once('\u{2026}'))
+            .collect()
+    } else {
+        String::new()
+    };
+
+    let pad = room.saturating_sub(label.chars().count());
+    let label_style = if active {
+        Style::default().fg(t.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.text)
+    };
+    Line::from(vec![
+        Span::styled(marker, Style::default().fg(t.accent)),
+        Span::styled("\u{2588}\u{2588} ", Style::default().fg(rule.color)),
+        Span::styled(label, label_style),
+        Span::raw(" ".repeat(pad + 1)),
+        Span::styled(tail, Style::default().fg(t.text_dim)),
+    ])
+}
+
+fn draw_legend(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = app.theme.panel(" Highlights (click to jump) ", false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let t = &app.theme;
+    if app.rules.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  no highlights yet — press a",
+                Style::default().fg(t.text_dim),
+            ))),
+            inner,
+        );
+        app.regions.legend_top = 0;
+        return;
     }
 
-    let block = t.panel(" Highlights (click to jump) ", false);
-    frame.render_widget(List::new(items).block(block), area);
+    let height = inner.height as usize;
+    let rows = app.rules.len();
+    app.legend_scroll_into_view(height);
+    app.legend_clamp_scroll(rows, height);
+    let top = app.legend_top.min(rows.saturating_sub(1));
+    app.regions.legend_top = top;
+    let end = (top + height).min(rows);
+
+    let t = &app.theme;
+    let mut items: Vec<ListItem> = Vec::new();
+    for i in top..end {
+        // Prefer `.get` so a transient rules/counts mismatch (e.g. mid
+        // chunked rescan) cannot panic the render path.
+        let count = if app.has_files() {
+            app.file().rule_counts.get(i).copied().unwrap_or(0)
+        } else {
+            0
+        };
+        items.push(ListItem::new(legend_row(
+            t,
+            &app.rules[i],
+            count,
+            app.active_rule == Some(i),
+            inner.width,
+        )));
+    }
+    frame.render_widget(List::new(items), inner);
+
+    // Same scrollbar the log and help use, and only when it carries information.
+    if rows > height {
+        let mut state = ScrollbarState::new(rows).position(top);
+        let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::default().fg(t.accent))
+            .track_style(Style::default().fg(t.border));
+        let track = Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: inner.y,
+            width: 1,
+            height: inner.height,
+        };
+        frame.render_stateful_widget(sb, track, &mut state);
+    }
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
@@ -1026,12 +1205,15 @@ fn draw_browser_popup(frame: &mut Frame, app: &mut App, area: Rect) {
     app.regions.browser = popup;
 
     let b = &app.browser;
+    // The panel's own width bounds the title; the path yields first and keeps
+    // its tail, because the folder you are standing in is the whole point.
+    let marked = format!("  ({} marked) ", b.marked.len());
+    let room = (popup.width as usize).saturating_sub(" Open logs — ".len() + marked.len() + 4);
     let title = format!(
-        " Open logs — {}  ({} marked) ",
-        b.cwd.display(),
-        b.marked.len()
+        " Open logs — {}{marked}",
+        fit(&b.cwd.display().to_string(), room, true)
     );
-    let block = t.panel(&title, true);
+    let block = t.panel_raised(&title);
     let inner = block.inner(popup);
 
     frame.render_widget(Clear, popup);
@@ -1147,8 +1329,25 @@ fn findings_filter_tabs(app: &App, counts: [usize; 5]) -> Line<'static> {
         spans.push(Span::styled(format!(" {label} {n} "), style));
         spans.push(Span::raw(" "));
     }
-    spans.push(Span::styled("f/F or ←/→", key(t)));
+    spans.push(Span::styled("f/F", key(t)));
     Line::from(spans)
+}
+
+/// Fixed height of the findings detail box.
+const DETAIL_ROWS: u16 = 5;
+
+/// A repeat count is the difference between "this happened" and "this happened
+/// 900 times", so it is emphasised rather than dimmed. Absent for a single hit
+/// to keep the common row quiet.
+fn repeat_span(count: usize, color: ratatui::style::Color) -> Span<'static> {
+    if count > 1 {
+        Span::styled(
+            format!("  \u{00D7}{count}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
+    }
 }
 
 /// Title for the findings popup: the finding count (with the raw hit count when
@@ -1165,12 +1364,24 @@ fn findings_title(total: usize, hits: usize, counts: [usize; 5]) -> String {
 }
 
 fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
-    let popup = centered_rect(84, 84, area);
+    let c = app.severity_counts();
+    let rows = app.panel_rows();
+
+    // Size to content, like every other overlay in the product. The collapsed
+    // default caps this at one row per reportable signature, so the panel is
+    // short unless the reader opens a group — the detail box then sits directly
+    // under the row it explains instead of 17 blank rows below it.
+    // An empty tab has no finding to describe, so its detail box shrinks to the
+    // one line that says why the list is empty.
+    let detail_rows = if rows.is_empty() { 1 } else { DETAIL_ROWS };
+    let chrome: u16 = 2 /* borders */ + 1 /* severity bar */ + 1 /* tabs */ + detail_rows;
+    let want_rows = rows.len().max(1) as u16;
+    let max_h = (area.height * 84 / 100).max(chrome + 1);
+    let popup = centered_rect_cells(area, area.width * 84 / 100, (want_rows + chrome).min(max_h));
     app.regions.findings = popup;
 
-    let c = app.severity_counts();
     let title = findings_title(app.findings.len(), app.occurrence_count(), c);
-    let block = app.theme.panel(&title, true);
+    let block = app.theme.panel_raised(&title);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -1181,8 +1392,8 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Min(3),
-            Constraint::Length(5),
+            Constraint::Min(1),
+            Constraint::Length(detail_rows),
         ])
         .split(inner);
     let bar_area = parts[0];
@@ -1191,76 +1402,108 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
     let detail_area = parts[3];
     app.regions.findings_list = list_area;
 
-    frame.render_widget(Paragraph::new(severity_bar(c, bar_area.width)), bar_area);
+    frame.render_widget(
+        Paragraph::new(severity_bar(&app.theme, c, bar_area.width)),
+        bar_area,
+    );
     frame.render_widget(Paragraph::new(findings_filter_tabs(app, c)), tabs_area);
 
     // Scroll state lives on App so the window holds still while the selection
     // moves inside it; only the height is a render-time fact.
     let list_height = list_area.height as usize;
     app.findings_scroll_into_view(list_height);
-    let visible = app.visible_findings();
-    let top = app.findings_top.min(visible.len());
+    let top = app.findings_top.min(rows.len());
     app.regions.findings_top = top;
-    let end = (top + list_height).min(visible.len());
+    let end = (top + list_height).min(rows.len());
 
     // Borrowed only after the &mut scroll update above.
     let t = &app.theme;
+    let sel = app.findings_sel;
     let mut items: Vec<ListItem> = Vec::new();
-    for &i in &visible[top..end] {
-        let f = app.findings[i];
-        let sig = &app.signatures[f.sig];
-        let is_sel = i == app.findings_sel;
-        // Defensive: findings are remapped when files close, but a panic mid-
-        // render would corrupt the terminal, so degrade instead of indexing.
-        let file_name = app
-            .files
-            .get(f.file)
-            .map(|lf| lf.name.as_str())
-            .unwrap_or("?");
-
-        let badge = Span::styled(
-            format!(" {:<4} ", sig.severity.label()),
-            Style::default()
-                .fg(t.match_fg)
-                .bg(sig.severity.color())
-                .add_modifier(Modifier::BOLD),
-        );
-        let title_style = if is_sel {
-            Style::default().fg(t.text).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.text)
+    for row in &rows[top..end] {
+        let mut line = match *row {
+            PanelRow::Parent {
+                sig,
+                first,
+                files,
+                hits,
+                expandable,
+            } => {
+                let s = &app.signatures[sig];
+                let open = app.is_expanded(sig);
+                // `▸`/`▾` is the disclosure state. The panel marks its cursor
+                // with the Row Wash, never with a marker glyph, so the two
+                // senses never share a surface. A one-file group shows neither:
+                // it has nothing to open, and a marker would promise otherwise.
+                let marker = Span::styled(
+                    if !expandable {
+                        "  "
+                    } else if open {
+                        "\u{25BE} "
+                    } else {
+                        "\u{25B8} "
+                    },
+                    Style::default().fg(t.text_dim),
+                );
+                let badge = Span::styled(
+                    format!(" {:<4} ", s.severity.label()),
+                    Style::default()
+                        .fg(t.match_fg)
+                        .bg(s.severity.color())
+                        .add_modifier(Modifier::BOLD),
+                );
+                // Where the evidence is: one file names it outright, several
+                // report the spread — the escalation-relevant fact on a bundle.
+                let where_ = if files == 1 {
+                    let name = app
+                        .files
+                        .get(app.findings[first].file)
+                        .map(|lf| lf.name.as_str())
+                        .unwrap_or("?");
+                    format!("  {}:{}", name, app.findings[first].line + 1)
+                } else {
+                    format!("  {files} files")
+                };
+                Line::from(vec![
+                    marker,
+                    badge,
+                    Span::raw(" "),
+                    Span::styled(
+                        s.title.to_string(),
+                        Style::default().fg(t.text).add_modifier(Modifier::BOLD),
+                    ),
+                    repeat_span(hits, s.severity.color()),
+                    Span::styled(where_, Style::default().fg(t.text_dim)),
+                ])
+            }
+            PanelRow::Child(i) => {
+                let f = app.findings[i];
+                let s = &app.signatures[f.sig];
+                // Defensive: findings are remapped when files close, but a panic
+                // mid-render would corrupt the terminal, so degrade instead.
+                let name = app
+                    .files
+                    .get(f.file)
+                    .map(|lf| lf.name.as_str())
+                    .unwrap_or("?");
+                Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled(
+                        format!("{}:{}", name, f.line + 1),
+                        Style::default().fg(t.text),
+                    ),
+                    repeat_span(f.count, s.severity.color()),
+                ])
+            }
         };
-        let loc = Span::styled(
-            format!("  {}:{}", file_name, f.line + 1),
-            Style::default().fg(t.text_dim),
-        );
-        // A repeat count is the difference between "this happened" and "this
-        // happened 900 times", so it is emphasised rather than dimmed. Absent
-        // for single hits to keep the common row quiet.
-        let repeat = if f.count > 1 {
-            Span::styled(
-                format!("  ×{}", f.count),
-                Style::default()
-                    .fg(sig.severity.color())
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            Span::raw("")
-        };
-        let mut line = Line::from(vec![
-            badge,
-            Span::raw(" "),
-            Span::styled(sig.title.to_string(), title_style),
-            repeat,
-            loc,
-        ]);
-        if is_sel {
+        if App::row_is(row, sel) {
             line = line.style(Style::default().bg(t.cursor_bg));
         }
         items.push(ListItem::new(line));
     }
     frame.render_widget(List::new(items), list_area);
 
+    let visible = app.visible_findings();
     // Detail box: explanation + the matched line for the current selection. A
     // filter with no matches shows why the list is empty rather than nothing.
     let detail = if visible.is_empty() && !app.findings.is_empty() {
@@ -1271,7 +1514,7 @@ fn draw_findings(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Style::default().fg(app.theme.text_dim),
         ))]
-    } else if let Some(f) = app.findings.get(app.findings_sel).copied() {
+    } else if let Some(f) = app.selected_finding() {
         let sig = &app.signatures[f.sig];
         let excerpt = app
             .files
@@ -1347,7 +1590,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         InputKind::GoToLine => "Go to line number",
     };
     let rect = centered_rect_lines(area, 60, 3);
-    let block = t.panel(&format!(" {prompt} — Enter to go, Esc to cancel "), true);
+    let block = t.panel_raised(&format!(" {prompt} — Enter to go, Esc to cancel "));
     let line = Line::from(vec![
         Span::styled("\u{203A} ", Style::default().fg(t.accent)),
         Span::styled(app.input_buffer.clone(), Style::default().fg(t.text)),
@@ -1461,8 +1704,11 @@ const HELP_SECTIONS: &[HelpSection] = &[
             ("s", "reopen last findings panel (no rescan)"),
             ("p / P", "next / previous finding (wraps; no panel)"),
             ("e", "export findings (never overwrites an export)"),
-            ("(in panel)", "j/k move · f/F or ←/→ severity filter"),
-            ("", "Enter jump · e export · , settings · ? help · q close"),
+            (
+                "(in panel)",
+                "j/k move · f/F severity filter · h/l fold groups",
+            ),
+            ("", "Enter open or jump · e export · , settings · q close"),
         ],
     },
     HelpSection {
@@ -1588,7 +1834,7 @@ fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let block = t
-        .panel(" Help (?/q/Esc to close) ", true)
+        .panel_raised(" Help (?/q/Esc to close) ")
         .title_alignment(Alignment::Center);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
@@ -1901,11 +2147,12 @@ mod tests {
 
     #[test]
     fn severity_bar_handles_zero_width_and_sparse_counts() {
-        let empty = severity_bar([0; 5], 0);
+        let t = Theme::dark();
+        let empty = severity_bar(&t, [0; 5], 0);
         assert!(empty.spans.is_empty() || empty.width() == 0);
 
         let counts = [1, 0, 2, 0, 1]; // info, low, med, high, crit
-        let bar = severity_bar(counts, 10);
+        let bar = severity_bar(&t, counts, 10);
         assert!(bar.width() <= 10);
         assert!(!bar.spans.is_empty());
     }
@@ -1986,25 +2233,29 @@ mod tests {
         assert!(severity_segments([1, 0, 0, 0, 0], 0).is_empty());
     }
 
-    /// Cells of `s` in `line`, and the color of the first cell that isn't track.
+    /// Cells of bar fill, head and track in `line`, plus the color of the first
+    /// filled cell. Fill is now a background — the badge treatment at bar scale
+    /// — so this reads `.bg` rather than counting a glyph.
     fn bar_parts(line: &Line<'static>) -> (usize, usize, usize, Option<ratatui::style::Color>) {
         let mut filled = 0;
         let mut head = 0;
         let mut track = 0;
         let mut lead = None;
         for span in &line.spans {
-            for ch in span.content.chars() {
-                match ch {
-                    '\u{2588}' => {
-                        if lead.is_none() {
-                            lead = span.style.fg;
-                        }
-                        filled += 1;
-                    }
-                    '\u{258C}' => head += 1,
-                    '\u{2591}' => track += 1,
-                    _ => {}
+            let n = span.content.chars().count();
+            if span.content.contains('\u{258C}') {
+                head += span.content.matches('\u{258C}').count();
+                continue;
+            }
+            if span.content.contains('\u{2591}') {
+                track += span.content.matches('\u{2591}').count();
+                continue;
+            }
+            if let Some(bg) = span.style.bg {
+                if lead.is_none() {
+                    lead = Some(bg);
                 }
+                filled += n;
             }
         }
         (filled, head, track, lead)
@@ -2214,7 +2465,7 @@ mod tests {
             start.elapsed().max(std::time::Duration::from_nanos(1))
         };
 
-        // One span, one level scan: the floor for this line.
+        // One span, one full-line level scan: the floor for this line.
         let plain = time_it(None);
         // MAX_SEARCH_RANGES segments: must add segmentation work, not 256 more
         // full-line scans.
@@ -2225,5 +2476,222 @@ mod tests {
             "busy line cost {ratio:.1}× the single-span line ({busy:?} vs {plain:?}) \
              — level tint recomputed per span?"
         );
+    }
+    /// Depth here is tonal, not simulated: the panel must be darker than the
+    /// field it punched out of, and the selected row darker still. If the fill
+    /// is lost the panel draws on the same tone as the log behind it and the
+    /// border color is left carrying the separation alone.
+    #[test]
+    fn findings_panel_stacks_the_three_tonal_tiers() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+
+        let mut app = App::new(&["samples/bundle".into()], Vec::new(), false).unwrap();
+        app.enable_auto_scan();
+        while app.scanning() {
+            app.scan_step(4000);
+        }
+        app.show_findings = true;
+
+        let mut term = Terminal::new(TestBackend::new(96, 28)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer().clone();
+
+        let t = Theme::dark();
+        let count = |c: Color| {
+            (0..buf.area.height)
+                .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+                .filter(|&(x, y)| buf[(x, y)].bg == c)
+                .count()
+        };
+
+        // Tier 1 (ground) survives outside the panel, tier 2 fills it, and tier
+        // 3 marks the cursor row inside it.
+        assert!(count(Color::Reset) > 0, "the log field must stay on ground");
+        assert!(
+            count(t.status_bg) > 200,
+            "the panel interior must carry the trench fill"
+        );
+        assert!(
+            count(t.cursor_bg) > 0,
+            "the selected row must read above the panel"
+        );
+
+        // The three tiers must be genuinely distinct values.
+        assert_ne!(t.status_bg, t.cursor_bg);
+    }
+    /// The rule the bars used to break: every colored thing in loglens is
+    /// paired with a word. A bar whose only channel is hue says nothing on a
+    /// 256-color terminal, to a colorblind reader, or in a pasted screenshot.
+    #[test]
+    fn severity_bar_states_what_each_band_is() {
+        let t = Theme::dark();
+        let text =
+            |l: &Line<'static>| -> String { l.spans.iter().map(|s| s.content.as_ref()).collect() };
+
+        // counts are indexed by `Severity as usize`: info, low, medium, high, crit.
+        let bar = severity_bar(&t, [0, 0, 4, 5, 0], 82);
+        let out = text(&bar);
+        assert!(out.contains("HIGH 5"), "{out:?}");
+        assert!(out.contains("MED 4"), "{out:?}");
+        assert_eq!(bar.width(), 82, "the bar must still fill its width");
+
+        // Every filled cell carries Ink Black on the severity's own fill — the
+        // badge treatment, so the label survives at any size.
+        for span in &bar.spans {
+            if span.content.trim().is_empty() {
+                continue;
+            }
+            assert_eq!(span.style.fg, Some(t.match_fg), "label must be Ink Black");
+            assert!(
+                span.style.bg.is_some(),
+                "label must sit on the severity fill"
+            );
+        }
+    }
+
+    /// The worst finding is never too small to name itself: one Critical among
+    /// forty Mediums used to render as an unlabelled two-cell sliver.
+    #[test]
+    fn the_leading_severity_always_earns_its_label() {
+        let t = Theme::dark();
+        let out: String = severity_bar(&t, [0, 0, 40, 6, 1], 82)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            out.contains("CRIT"),
+            "a lone Critical must name itself: {out:?}"
+        );
+        assert!(
+            out.contains("MED 40"),
+            "the donor keeps its own label: {out:?}"
+        );
+
+        // Promotion never breaks the width invariant.
+        for width in [20u16, 40, 82, 137] {
+            let total: usize = severity_segments([0, 0, 40, 6, 1], width)
+                .iter()
+                .map(|s| s.1)
+                .sum();
+            assert_eq!(total, width as usize, "width {width}");
+        }
+    }
+
+    /// Too narrow to name is still honest: the band keeps its fill so the
+    /// proportion reads, rather than being dropped or truncated mid-word.
+    #[test]
+    fn a_band_too_narrow_to_label_keeps_its_fill() {
+        let t = Theme::dark();
+        let bar = severity_bar(&t, [0, 0, 1, 1, 1], 9);
+        assert_eq!(bar.width(), 9);
+        let out: String = bar.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            !out.contains("CRI"),
+            "never truncate a label mid-word: {out:?}"
+        );
+        assert!(
+            bar.spans.iter().all(|s| s.style.bg.is_some()),
+            "every cell keeps a severity fill"
+        );
+    }
+    /// A path answers "where am I", so its tail is the part worth keeping. The
+    /// browser used to clip the other end, leaving the drive root on screen and
+    /// the actual directory off it.
+    #[test]
+    fn fit_keeps_the_end_that_carries_the_meaning() {
+        let path = "/private/tmp/claude-501/loglens/samples/mbam-android";
+        let tail = fit(path, 24, true);
+        assert_eq!(tail.chars().count(), 24);
+        assert!(tail.starts_with('\u{2026}'), "{tail:?}");
+        assert!(tail.ends_with("mbam-android"), "{tail:?}");
+
+        let prose = fit("Scanning for known-bad signatures", 20, false);
+        assert_eq!(prose.chars().count(), 20);
+        assert!(prose.starts_with("Scanning"), "{prose:?}");
+        assert!(prose.ends_with('\u{2026}'), "{prose:?}");
+
+        // Fits already: untouched, no ellipsis.
+        assert_eq!(fit("short", 20, false), "short");
+        assert_eq!(fit("short", 20, true), "short");
+        // Exactly the budget is not a truncation.
+        assert_eq!(fit("12345", 5, false), "12345");
+        // Degenerate widths must not panic or overflow.
+        for w in 0..4 {
+            assert!(fit(path, w, true).chars().count() <= w);
+            assert!(fit(path, w, false).chars().count() <= w);
+        }
+        // Multibyte is counted in characters, not bytes.
+        let uni = fit("日本語のディレクトリ名", 6, true);
+        assert_eq!(uni.chars().count(), 6);
+    }
+
+    /// Fixed at 34 cells the rail took half of a 60-column terminal to show one
+    /// placeholder sentence. It keeps its full width where there is room and
+    /// yields to the log below that.
+    #[test]
+    fn legend_width_yields_to_the_log_on_narrow_terminals() {
+        assert_eq!(legend_width(200), 34, "wide terminals keep the full rail");
+        assert_eq!(legend_width(100), 34);
+        assert!(
+            legend_width(60) < 34,
+            "60 cols must not spend 34 on the rail"
+        );
+        assert!(
+            legend_width(60) as usize * 2 < 60,
+            "the rail must never take half the terminal"
+        );
+        // Never so narrow it cannot carry `██ label kw N`.
+        assert!(legend_width(20) >= 16);
+        assert!(legend_width(1) >= 16);
+        // Monotonic: a wider terminal never yields a narrower rail.
+        let mut prev = 0;
+        for w in (10u16..=300).step_by(7) {
+            let cur = legend_width(w);
+            assert!(cur >= prev, "width {w} narrowed the rail");
+            prev = cur;
+        }
+    }
+
+    /// The count is the reason the rail exists, so the label is the only elastic
+    /// part. Truncating right-to-left used to drop the number instead.
+    #[test]
+    fn legend_row_truncates_the_label_never_the_count() {
+        let t = Theme::dark();
+        let rule =
+            rules::compile_rule("certificate-validation-failure", false, false, 0, &t).unwrap();
+
+        for width in [16u16, 20, 24, 34] {
+            let line = legend_row(&t, &rule, 47, false, width);
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.contains("kw 47"),
+                "the count must survive at width {width}: {text:?}"
+            );
+            assert!(
+                line.width() <= width as usize,
+                "row overflowed at width {width}: {text:?}"
+            );
+        }
+
+        // Long label at a narrow width is marked as truncated, not silently cut.
+        let narrow: String = legend_row(&t, &rule, 47, false, 24)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(narrow.contains('\u{2026}'), "{narrow:?}");
+
+        // A short label is left intact.
+        let short = rules::compile_rule("ERROR", false, false, 1, &t).unwrap();
+        let wide: String = legend_row(&t, &short, 4, false, 34)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(wide.contains("ERROR"), "{wide:?}");
+        assert!(!wide.contains('\u{2026}'), "{wide:?}");
     }
 }

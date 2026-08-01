@@ -134,6 +134,8 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.findings_move(3);
             } else if app.mode == Mode::Browser {
                 app.browser.move_selection(3);
+            } else if app.show_legend && hit(inner(r.legend), col, row) {
+                app.legend_scroll_by(3);
             } else {
                 app.scroll(3);
             }
@@ -145,6 +147,8 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 app.findings_move(-3);
             } else if app.mode == Mode::Browser {
                 app.browser.move_selection(-3);
+            } else if app.show_legend && hit(inner(r.legend), col, row) {
+                app.legend_scroll_by(-3);
             } else {
                 app.scroll(-3);
             }
@@ -169,12 +173,14 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
                 // the exact list rect (the popup also contains a severity bar
                 // and detail box, which must not map to findings).
                 if hit(r.findings_list, col, row) {
-                    // Rows map to the filtered list, so translate through it
-                    // rather than indexing `findings` directly.
+                    // Rows map to the drawn tree, so translate through it rather
+                    // than indexing `findings` directly.
                     let pos = r.findings_top + (row - r.findings_list.y) as usize;
-                    if let Some(&idx) = app.visible_findings().get(pos) {
-                        app.findings_sel = idx;
-                        app.findings_jump();
+                    if let Some(row) = app.panel_rows().get(pos).copied() {
+                        app.select_panel_row(row);
+                        // Click means the same as Enter: open a group, or go to
+                        // a file's evidence.
+                        app.findings_activate();
                     }
                 }
                 return;
@@ -209,7 +215,9 @@ fn handle_mouse(app: &mut App, m: MouseEvent) {
             // Click a highlight in the legend -> jump through its matches.
             let legend_inner = inner(r.legend);
             if app.show_legend && hit(legend_inner, col, row) {
-                let idx = (row - legend_inner.y) as usize;
+                // Offset by the rail's own scroll, or a click below the fold
+                // jumps to the wrong rule.
+                let idx = r.legend_top + (row - legend_inner.y) as usize;
                 app.click_rule(idx);
                 return;
             }
@@ -340,11 +348,14 @@ fn handle_viewer(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
             KeyCode::Char('j') | KeyCode::Down => app.findings_move(1),
             KeyCode::Char('k') | KeyCode::Up => app.findings_move(-1),
-            KeyCode::Char('f') | KeyCode::Right => app.cycle_findings_filter(1),
-            KeyCode::Char('F') | KeyCode::Left => app.cycle_findings_filter(-1),
+            KeyCode::Char('f') => app.cycle_findings_filter(1),
+            KeyCode::Char('F') => app.cycle_findings_filter(-1),
             KeyCode::Char('p') => app.next_finding(),
             KeyCode::Char('P') => app.prev_finding(),
-            KeyCode::Enter => app.findings_jump(),
+            // Enter opens or closes a signature, or goes to a file's evidence.
+            KeyCode::Enter => app.findings_activate(),
+            KeyCode::Char('l') | KeyCode::Right => app.findings_set_expanded(true),
+            KeyCode::Char('h') | KeyCode::Left => app.findings_set_expanded(false),
             KeyCode::Char('e') => app.export_findings(),
             // Both overlays are checked before this one, so they layer on top
             // and Esc drops back to the findings list. Without these, scanning
@@ -726,7 +737,7 @@ mod tests {
         // From the open panel, `p` jumps to the selection and closes.
         handle_viewer(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
         assert!(!app.show_findings);
-        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.findings_sel, crate::app::FindingSel::Child(0));
         assert!(
             app.status
                 .as_deref()
@@ -737,9 +748,9 @@ mod tests {
         );
 
         handle_viewer(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
-        assert_eq!(app.findings_sel, 1);
+        assert_eq!(app.findings_sel, crate::app::FindingSel::Child(1));
         handle_viewer(&mut app, KeyCode::Char('P'), KeyModifiers::NONE);
-        assert_eq!(app.findings_sel, 0);
+        assert_eq!(app.findings_sel, crate::app::FindingSel::Child(0));
     }
 
     #[test]
